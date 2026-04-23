@@ -8,25 +8,7 @@
 
 ## Overview
 
-This project builds a **real-time multi-agent crowd simulation in Unity**, focusing on scaling the number of NPCs while maintaining interactive performance.
-
-We explore how **system-level optimizations** can increase agent count without sacrificing believable behavior.
-
-The project starts with a naive per-agent update system and incrementally introduces optimized designs such as:
-
-- Centralized scheduling  
-- Spatial partitioning  
-- Behavior Level-of-Detail (LOD)  
-- (Optional) Parallelization via Unity Jobs/Burst  
-
----
-
-## Goals
-
-- Maximize the number of simulated NPCs  
-- Maintain **real-time performance (≥ 30 FPS)**  
-- Preserve **reasonable behavioral realism**  
-- Understand tradeoffs between **scalability and quality**  
+We propose building a real-time multi-agent simulation in Unity in which a large number of NPCs navigate and perform simple behaviors within a shared game environment. Our goal is to maximize the number of believable agents that can be simulated while maintaining an interactive frame rate. We will begin with a naive baseline where each NPC independently updates its behavior every frame, and then develop optimized system designs using centralized scheduling, spatial partitioning, and behavior level-of-detail (LOD). We will evaluate performance and behavior quality across increasing agent counts to understand the tradeoffs between scalability and realism.
 
 ---
 
@@ -44,80 +26,47 @@ The project starts with a naive per-agent update system and incrementally introd
 - Performance metrics (FPS, CPU time)  
 
 ### Constraints
-- Must maintain **interactive frame rate (≥ 30 FPS)** on a standard desktop  
-
-### Research Question
-
-> How can system-level optimizations enable scalable multi-agent simulation in Unity while preserving acceptable behavior quality?
+The fundamental constraint of this problem is the wall-clock compute time for each update iteration of the agents. We aim to maintain an interactive fram rate of at least 30 FPS on a typical desktop setup.
 
 ---
 
-## System Design
+## Task List
 
-### Baseline System
+- Create a naive implementation where:
+  - Each NPC is a Unity `GameObject`  
+  - Each NPC runs a `MonoBehaviour`  
+  - All agents update every frame  
+  - Navigation and decision-making are fully independent  
+*This serves as the performance reference point.*
+- Implement Centralized Scheduling
+  - Update only a subset of agents per frame  
+  - Use batching or staggered updates 
 
-A naive implementation where:
+- Implement Spatial Partitioning
+  - Use grid / spatial hashing / quadtree  
+  - Limit neighbor queries to local regions  
 
-- Each NPC is a Unity `GameObject`  
-- Each NPC runs a `MonoBehaviour`  
-- All agents update every frame  
-- Navigation and decision-making are fully independent  
+- Create a Behavior LOD System
+  - High-frequency, full logic for nearby agents  
+  - Reduced update frequency or simplified logic for distant agents  
 
-This serves as the performance reference point.
 
----
+*Nice to haves (if ahead of schedule):*
+- Implement Parallelization
+  - Unity Jobs System  
+  - Burst Compiler for performance acceleration  
 
-### Optimized System
-
-We introduce multiple system-level improvements:
-
-#### 1. Centralized Scheduling
-- Update only a subset of agents per frame  
-- Use batching or staggered updates  
-
-#### 2. Spatial Partitioning
-- Use grid / spatial hashing / quadtree  
-- Limit neighbor queries to local regions  
-
-#### 3. Behavior LOD
-- High-frequency, full logic for nearby agents  
-- Reduced update frequency or simplified logic for distant agents  
-
-#### 4. Parallelization (Optional)
-- Unity Jobs System  
-- Burst Compiler for performance acceleration  
+*We plan to mostly work on this project together in-person. We expect to work on the naive implementation together, and partially distribute the focus on implementing the three implementation strategies across the two of us.*
 
 ---
 
 ## Evaluation
 
-### Performance Metrics
+To evaluate the system’s success, we will use performance metrics such as FPS, CPU frame time, and the maximum NPC count that can be maintained at a target frame rate, comparing results against the naive implementation. To assess behavior quality, we will define metrics such as task completion rate, collision or congestion frequency, and stagnation or deadlock rates. This naturally motivates controlled scaling experiments such as gradually increasing the NPC count and comparing the optimized system variants to the baseline.
 
-- Frames Per Second (FPS)  
-- CPU frame time  
-- Maximum NPC count at target FPS  
+## Expected Deliverables
 
-### Behavior Quality Metrics
-
-- Task completion rate  
-- Collision / congestion frequency  
-- Stagnation or deadlock rate  
-
----
-
-### Experiments
-
-We perform controlled scaling experiments:
-
-- Gradually increase NPC count  
-- Compare:
-  - Baseline system  
-  - Optimized system variants  
-
-### Visualization
-
-- NPC count vs. FPS  
-- NPC count vs. task success rate  
+To demonstrate the capabilities of the system, we will create a Unity demo showcasing the scalable NPC simulations. Ideally, we will be able to show the effects of applying our strategies to compare it against the naive implementation. To present our evaluations and analysis, we plan to create visualizations of the collected data, such as NPC count vs. FPS and NPC count vs. task success rate, along with similar performance and behavior quality comparisons.
 
 ---
 
@@ -125,7 +74,7 @@ We perform controlled scaling experiments:
 
 We expect:
 
-- **2×–4× increase** in maximum supported agent count  
+- 2×–4× increase in maximum supported agent count  
 - Comparable behavior quality between baseline and optimized systems  
 - Clear tradeoff curves between performance and realism  
 
@@ -133,32 +82,14 @@ We expect:
 
 ## Risks & Mitigation
 
-**Overly complex behaviors**  
+Overly complex behaviors  
 → Keep agent logic simple and controlled  
 
-**Incorrect bottleneck assumptions**  
+Incorrect bottleneck assumptions  
 → Profile early (CPU, navigation, rendering)  
 
-**Lack of measurable evaluation**  
+Lack of measurable evaluation  
 → Implement logging and metrics from the beginning  
-
----
-
-## Deliverables
-
-- Unity demo with scalable NPC simulation  
-- Performance evaluation plots  
-- Short demo video  
-- Final report documenting system design and findings  
-
----
-
-## Tech Stack
-
-- Unity (C#)  
-- NavMesh / custom navigation  
-- Unity Jobs + Burst (optional)  
-- Unity Profiler  
 
 ---
 
