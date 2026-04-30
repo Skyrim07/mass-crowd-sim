@@ -101,17 +101,32 @@ public class CrowdExperimentManager : MonoBehaviour
         float fps = smoothedDeltaTime > 0f ? 1f / smoothedDeltaTime : 0f;
         string csvPath = metricsLogger != null ? metricsLogger.CsvOutputPath : "No MetricsLogger assigned";
 
-        GUI.Box(new Rect(10f, 10f, 360f, 180f), string.Empty);
-        GUILayout.BeginArea(new Rect(20f, 18f, 340f, 165f));
-        GUILayout.Label("Crowd Debug");
-        GUILayout.Space(4f);
-        GUILayout.Label("Mode: Baseline");
-        GUILayout.Label($"Agents: {agents.Count}");
-        GUILayout.Label($"FPS: {fps:F1}");
-        GUILayout.Label($"Frame Time: {frameTimeMs:F2} ms");
-        GUILayout.Label($"Stuck Agents: {GetStuckAgentCount()}");
-        GUILayout.Label($"Completed Tasks: {GetTotalCompletedTasks()}");
-        GUILayout.Label($"CSV: {csvPath}");
+        GUIStyle titleStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 20,
+            fontStyle = FontStyle.Bold
+        };
+
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 16,
+            wordWrap = true
+        };
+
+        Rect panelRect = new Rect(10f, 10f, 560f, 275f);
+        Rect contentRect = new Rect(24f, 22f, 532f, 250f);
+
+        GUI.Box(panelRect, string.Empty);
+        GUILayout.BeginArea(contentRect);
+        GUILayout.Label("Crowd Debug", titleStyle);
+        GUILayout.Space(6f);
+        GUILayout.Label("Mode: Baseline", labelStyle);
+        GUILayout.Label($"Agents: {agents.Count}", labelStyle);
+        GUILayout.Label($"FPS: {fps:F1}", labelStyle);
+        GUILayout.Label($"Frame Time: {frameTimeMs:F2} ms", labelStyle);
+        GUILayout.Label($"Stuck Agents: {GetStuckAgentCount()}", labelStyle);
+        GUILayout.Label($"Completed Tasks: {GetTotalCompletedTasks()}", labelStyle);
+        GUILayout.Label($"CSV: {csvPath}", labelStyle);
         GUILayout.EndArea();
     }
 

@@ -237,8 +237,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
-  spawnAreaSize: {x: 50, y: 50}
-  agentCount: 100
+  spawnAreaSize: {x: 100, y: 100}
+  agentCount: 1000
   randomSeed: 12345
   spawnOnStart: 1
   navMeshSampleMaxDistance: 4
@@ -246,6 +246,7 @@ MonoBehaviour:
   metricsLogger: {fileID: 1755908057}
   agentCountsToTest: 3200000064000000c80000009001000020030000
   trialDurationSeconds: 30
+  showDebugUi: 1
 --- !u!4 &998699049
 Transform:
   m_ObjectHideFlags: 0
