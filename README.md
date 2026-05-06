@@ -6,6 +6,12 @@
 
 ---
 
+The checkpoint writeups can be found [here](Checkpoints).
+
+- [Checkpoint 1](Checkpoints/checkpoint1.md)
+
+---
+
 ## Overview
 
 We propose building a real-time multi-agent simulation in Unity in which a large number of NPCs navigate and perform simple behaviors within a shared game environment. Our goal is to maximize the number of believable agents that can be simulated while maintaining an interactive frame rate. We will begin with a naive baseline where each NPC independently updates its behavior every frame, and then develop optimized system designs using centralized scheduling, spatial partitioning, and behavior level-of-detail (LOD). We will evaluate performance and behavior quality across increasing agent counts to understand the tradeoffs between scalability and realism.
