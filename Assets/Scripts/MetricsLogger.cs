@@ -25,6 +25,16 @@ public class MetricsLogger : MonoBehaviour
         ? Path.Combine(Application.persistentDataPath, csvFileName)
         : csvPath;
 
+    private void Awake()
+    {
+        csvPath = Path.Combine(Application.persistentDataPath, csvFileName);
+
+        if (writeCsvFile)
+        {
+            InitializeCsvFile();
+        }
+    }
+
     [SKInspectorButton("Open CSV Folder")]
     public void OpenCsvFolder()
     {
@@ -126,8 +136,14 @@ public class MetricsLogger : MonoBehaviour
     private void InitializeCsvFile()
     {
         csvPath = Path.Combine(Application.persistentDataPath, csvFileName);
+        string outputDirectory = Path.GetDirectoryName(csvPath);
 
-        if (csvInitialized)
+        if (!string.IsNullOrEmpty(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+        }
+
+        if (csvInitialized && File.Exists(csvPath))
         {
             return;
         }

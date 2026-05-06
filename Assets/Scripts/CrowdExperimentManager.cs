@@ -27,6 +27,7 @@ public class CrowdExperimentManager : MonoBehaviour
     private readonly List<CrowdAgent> agents = new List<CrowdAgent>();
     private Coroutine scalingExperimentCoroutine;
     private float smoothedDeltaTime;
+    private bool baselineMetricsRunning;
 
     public IReadOnlyList<CrowdAgent> Agents => agents;
     public int ActiveAgentCount => agents.Count;
@@ -41,7 +42,13 @@ public class CrowdExperimentManager : MonoBehaviour
         if (spawnOnStart)
         {
             ResetExperiment();
+            BeginBaselineMetricsRun();
         }
+    }
+
+    private void OnDisable()
+    {
+        EndBaselineMetricsRun();
     }
 
     [ContextMenu("Run Scaling Experiment")]
@@ -52,6 +59,7 @@ public class CrowdExperimentManager : MonoBehaviour
             StopCoroutine(scalingExperimentCoroutine);
         }
 
+        EndBaselineMetricsRun();
         scalingExperimentCoroutine = StartCoroutine(RunScalingExperiment());
     }
 
@@ -161,6 +169,28 @@ public class CrowdExperimentManager : MonoBehaviour
 
             agents.Add(agent);
         }
+    }
+
+    private void BeginBaselineMetricsRun()
+    {
+        if (metricsLogger == null)
+        {
+            return;
+        }
+
+        metricsLogger.BeginRun("NaiveEveryAgentEveryFrame", agents.Count);
+        baselineMetricsRunning = true;
+    }
+
+    private void EndBaselineMetricsRun()
+    {
+        if (!baselineMetricsRunning || metricsLogger == null)
+        {
+            return;
+        }
+
+        metricsLogger.EndRun();
+        baselineMetricsRunning = false;
     }
 
     private void ClearExistingAgents()

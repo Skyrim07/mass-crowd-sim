@@ -422,9 +422,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   logToConsole: 1
-  writeCsvFile: 0
+  writeCsvFile: 1
   csvFileName: crowd_metrics.csv
-  sampleIntervalSeconds: 1
+  sampleIntervalSeconds: 5
 --- !u!4 &1755908058
 Transform:
   m_ObjectHideFlags: 0
