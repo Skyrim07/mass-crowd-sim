@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -20,6 +21,7 @@ public class MetricsLogger : MonoBehaviour
     private int accumulatedFrames;
     private bool isRunning;
     private bool csvInitialized;
+    private Func<int> completedTasksProvider;
 
     public string CsvOutputPath => string.IsNullOrEmpty(csvPath)
         ? Path.Combine(Application.persistentDataPath, csvFileName)
@@ -66,10 +68,11 @@ public class MetricsLogger : MonoBehaviour
         RecordFrame(Time.deltaTime);
     }
 
-    public void BeginRun(string variantName, int agentCount)
+    public void BeginRun(string variantName, int agentCount, Func<int> completedTasksProvider = null)
     {
         currentVariant = variantName;
         currentAgentCount = agentCount;
+        this.completedTasksProvider = completedTasksProvider;
         elapsedTime = 0f;
         sampleTimer = 0f;
         accumulatedFrameTime = 0f;
@@ -116,7 +119,8 @@ public class MetricsLogger : MonoBehaviour
 
         float averageDeltaTime = accumulatedFrameTime / Mathf.Max(1, accumulatedFrames);
         float averageFps = 1f / Mathf.Max(averageDeltaTime, 0.0001f);
-        string line = FormatCsvLine(elapsedTime, currentVariant, currentAgentCount, averageDeltaTime * 1000f, averageFps);
+        int completedTasks = completedTasksProvider?.Invoke() ?? 0;
+        string line = FormatCsvLine(elapsedTime, currentVariant, currentAgentCount, completedTasks, averageDeltaTime * 1000f, averageFps);
 
         if (logToConsole)
         {
@@ -148,11 +152,11 @@ public class MetricsLogger : MonoBehaviour
             return;
         }
 
-        File.WriteAllText(csvPath, "time_seconds,variant,agent_count,average_delta_time_ms,average_fps\n", Encoding.UTF8);
+        File.WriteAllText(csvPath, "time_seconds,variant,agent_count,completed_tasks,average_delta_time_ms,average_fps\n", Encoding.UTF8);
         csvInitialized = true;
     }
 
-    private static string FormatCsvLine(float timeSeconds, string variant, int agentCount, float averageDeltaTimeMs, float averageFps)
+    private static string FormatCsvLine(float timeSeconds, string variant, int agentCount, int completedTasks, float averageDeltaTimeMs, float averageFps)
     {
         CultureInfo culture = CultureInfo.InvariantCulture;
 
@@ -160,6 +164,7 @@ public class MetricsLogger : MonoBehaviour
             timeSeconds.ToString("F3", culture),
             variant,
             agentCount.ToString(culture),
+            completedTasks.ToString(culture),
             averageDeltaTimeMs.ToString("F3", culture),
             averageFps.ToString("F2", culture));
     }

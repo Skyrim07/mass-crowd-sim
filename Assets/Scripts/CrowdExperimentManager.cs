@@ -79,7 +79,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
             if (metricsLogger != null)
             {
-                metricsLogger.BeginRun("NaiveEveryAgentEveryFrame", testAgentCount);
+                metricsLogger.BeginRun("Baseline", testAgentCount, GetTotalCompletedTasks);
             }
 
             yield return new WaitForSeconds(trialDurationSeconds);
@@ -178,7 +178,7 @@ public class CrowdExperimentManager : MonoBehaviour
             return;
         }
 
-        metricsLogger.BeginRun("NaiveEveryAgentEveryFrame", agents.Count);
+        metricsLogger.BeginRun("Baseline", agents.Count, GetTotalCompletedTasks);
         baselineMetricsRunning = true;
     }
 
