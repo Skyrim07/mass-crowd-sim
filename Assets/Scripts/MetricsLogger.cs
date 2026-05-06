@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text;
+using SKCell;
 using UnityEngine;
 
 public class MetricsLogger : MonoBehaviour
@@ -23,6 +24,27 @@ public class MetricsLogger : MonoBehaviour
     public string CsvOutputPath => string.IsNullOrEmpty(csvPath)
         ? Path.Combine(Application.persistentDataPath, csvFileName)
         : csvPath;
+
+    [SKInspectorButton("Open CSV Folder")]
+    public void OpenCsvFolder()
+    {
+        string outputPath = CsvOutputPath;
+        string outputDirectory = Path.GetDirectoryName(outputPath);
+
+        if (string.IsNullOrEmpty(outputDirectory))
+        {
+            Debug.LogWarning($"Could not resolve CSV output folder from path: {outputPath}");
+            return;
+        }
+
+        Directory.CreateDirectory(outputDirectory);
+
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.RevealInFinder(File.Exists(outputPath) ? outputPath : outputDirectory);
+#else
+        Application.OpenURL("file:///" + outputDirectory.Replace("\\", "/"));
+#endif
+    }
 
     private void Update()
     {
