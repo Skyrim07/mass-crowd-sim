@@ -1,0 +1,4 @@
+﻿time_seconds,variant,agent_count,completed_tasks,average_delta_time_ms,average_fps
+5.002,Baseline,2000,73,22.839,43.79
+10.019,Baseline,2000,262,22.397,44.65
+15.039,Baseline,2000,548,23.349,42.83
