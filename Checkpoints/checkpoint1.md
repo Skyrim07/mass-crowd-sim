@@ -4,6 +4,11 @@
 
 In this checkpoint, we aim to formally define the goals of the project and how we will evaluate the measure of success.
 
+**Code for the baseline simulation system can be found in the Scripts folder [here](../Assets/Scripts/).**  
+*(this folder also contains the logging system we used to generate the csv files)*  
+
+**Code for generating the plots can be found in the Python Scripts folder [here](../PythonScripts/).**
+
 
 ### Goals
 
@@ -19,20 +24,20 @@ To compare and evaluate our incremental implementations of strategies, we can pe
 
 #### Experiments
 - **Agent Count vs Delta Time**  
-This will be a simple comparison of the scalability of the simulation for each system. A simple plot like below should suffice.
+This will be a simple comparison of the scalability of the simulation for each system. A simple plot like below should suffice.  
 ![image](./Plots/output.png)
 
 - **Agent Count vs FPS**  
-This is the same as the Agent Count vs Delta Time experiment defined above, with just the units of measurement of performance being the recprocal of each other.
+This is the same as the Agent Count vs Delta Time experiment defined above, with just the units of measurement of performance being the recprocal of each other.  
 ![image](./Plots/output1.png)
 
 - **Agent Count vs Task Completion Rate**  
-One of the goals of this project is to also maintain the behavioral quality of each agent as we scale the simulation. Measuring such quality is non-trivial, but we will attempt to estimate this through the task completion rate (in this case, the number of times each agent successfully navigates to its target position). Specifically, we will be measuring the number of tasks completed out of the total number of agents in the simulation across a predefined time period. This effectively gives the task completion fraction across a set time period. An example of such a plot is shown below (using tasks/agentcount/second). 
+One of the goals of this project is to also maintain the behavioral quality of each agent as we scale the simulation. Measuring such quality is non-trivial, but we will attempt to estimate this through the task completion rate (in this case, the number of times each agent successfully navigates to its target position). Specifically, we will be measuring the number of tasks completed out of the total number of agents in the simulation across a predefined time period. This effectively gives the task completion fraction across a set time period. An example of such a plot is shown below (using tasks/agentcount/second).  
 ![image](./Plots/output2.png)
 
 - **Alterations of the navigation environment**  
 We will also perform the experiments defined above with different navigation environments, to see if the environments have an effect on the quality of the simulation. Each environment will have different obstacles that the agnet may need to navigate around.
 
 - **Profiling**  
-Unity provides a built-in profiler that allows us to see the distribution of compute time being spent on different parts of the core game logic. We can identify and locate "hot paths" or performance-critical parts of the code, to help guide us for optimization.
+Unity provides a built-in profiler that allows us to see the distribution of compute time being spent on different parts of the core game logic. We can identify and locate "hot paths" or performance-critical parts of the code, to help guide us for optimization.  
 ![image](../Assets/Data/Milestone1/profiler.png)
