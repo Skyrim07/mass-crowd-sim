@@ -1,0 +1,4 @@
+﻿time_seconds,variant,agent_count,completed_tasks,average_delta_time_ms,average_fps
+5.009,SpatialHashGpuInstanced,5000,336,24.554,40.73
+10.030,SpatialHashGpuInstanced,5000,1080,24.610,40.63
+15.039,SpatialHashGpuInstanced,5000,2235,25.954,38.53
