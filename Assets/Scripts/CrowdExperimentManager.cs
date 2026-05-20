@@ -22,6 +22,16 @@ public class CrowdExperimentManager : MonoBehaviour
         public int completedTasks;
     }
 
+    private struct InstancedRenderPart
+    {
+        public Mesh mesh;
+        public Material[] materials;
+        public Matrix4x4 localMatrix;
+        public ShadowCastingMode shadowCastingMode;
+        public bool receiveShadows;
+        public int layer;
+    }
+
     private const int MaxInstancesPerDrawCall = 1023;
 
     [Header("Algorithm")]
@@ -61,11 +71,11 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private readonly List<CrowdAgent> agents = new List<CrowdAgent>();
     private readonly Dictionary<Vector2Int, List<int>> spatialGrid = new Dictionary<Vector2Int, List<int>>();
+    private readonly List<InstancedRenderPart> instancedRenderParts = new List<InstancedRenderPart>();
+    private readonly Dictionary<Material, Material> runtimeInstancedMaterials = new Dictionary<Material, Material>();
     private readonly Matrix4x4[] instanceMatrices = new Matrix4x4[MaxInstancesPerDrawCall];
     private Coroutine scalingExperimentCoroutine;
     private SimAgent[] simAgents;
-    private Material runtimeInstancedAgentMaterial;
-    private Material runtimeMaterialSource;
     private float smoothedDeltaTime;
     private bool metricsRunActive;
 
@@ -104,7 +114,7 @@ public class CrowdExperimentManager : MonoBehaviour
     private void OnDisable()
     {
         EndMetricsRun();
-        ReleaseRuntimeInstancedMaterial();
+        ReleaseRuntimeInstancedMaterials();
     }
 
     [ContextMenu("Run Scaling Experiment")]
@@ -355,8 +365,25 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private bool TryResolveInstancedRenderingAssets()
     {
+        if (instancedRenderParts.Count > 0)
+        {
+            return true;
+        }
+
+        instancedRenderParts.Clear();
+
         if (instancedAgentMesh != null && instancedAgentMaterial != null)
         {
+            instancedRenderParts.Add(new InstancedRenderPart
+            {
+                mesh = instancedAgentMesh,
+                materials = new[] { instancedAgentMaterial },
+                localMatrix = Matrix4x4.identity,
+                shadowCastingMode = ShadowCastingMode.On,
+                receiveShadows = true,
+                layer = gameObject.layer
+            });
+
             return true;
         }
 
@@ -365,20 +392,38 @@ public class CrowdExperimentManager : MonoBehaviour
             return false;
         }
 
-        MeshFilter meshFilter = agentPrefab.GetComponentInChildren<MeshFilter>();
-        MeshRenderer meshRenderer = agentPrefab.GetComponentInChildren<MeshRenderer>();
+        Transform root = agentPrefab.transform;
+        MeshFilter[] meshFilters = agentPrefab.GetComponentsInChildren<MeshFilter>(true);
 
-        if (instancedAgentMesh == null && meshFilter != null)
+        for (int i = 0; i < meshFilters.Length; i++)
         {
-            instancedAgentMesh = meshFilter.sharedMesh;
+            MeshFilter meshFilter = meshFilters[i];
+            MeshRenderer meshRenderer = meshFilter.GetComponent<MeshRenderer>();
+
+            if (meshRenderer == null || !meshRenderer.enabled || meshFilter.sharedMesh == null)
+            {
+                continue;
+            }
+
+            Material[] materials = meshRenderer.sharedMaterials;
+
+            if (materials == null || materials.Length == 0)
+            {
+                continue;
+            }
+
+            instancedRenderParts.Add(new InstancedRenderPart
+            {
+                mesh = meshFilter.sharedMesh,
+                materials = materials,
+                localMatrix = root.worldToLocalMatrix * meshFilter.transform.localToWorldMatrix,
+                shadowCastingMode = meshRenderer.shadowCastingMode,
+                receiveShadows = meshRenderer.receiveShadows,
+                layer = meshRenderer.gameObject.layer
+            });
         }
 
-        if (instancedAgentMaterial == null && meshRenderer != null)
-        {
-            instancedAgentMaterial = meshRenderer.sharedMaterial;
-        }
-
-        return instancedAgentMesh != null && instancedAgentMaterial != null;
+        return instancedRenderParts.Count > 0;
     }
 
     private void UpdateSpatialHashSimulation(float deltaTime)
@@ -519,100 +564,109 @@ public class CrowdExperimentManager : MonoBehaviour
             return;
         }
 
-        Material drawMaterial = GetRuntimeInstancedMaterial();
-
-        if (drawMaterial == null)
+        for (int partIndex = 0; partIndex < instancedRenderParts.Count; partIndex++)
         {
-            return;
-        }
+            InstancedRenderPart renderPart = instancedRenderParts[partIndex];
+            int batchCount = 0;
 
-        int batchCount = 0;
-
-        for (int i = 0; i < simAgents.Length; i++)
-        {
-            Vector3 forward = simAgents[i].velocity.WithY(0f);
-            Quaternion rotation = forward.sqrMagnitude > 0.0001f
-                ? Quaternion.LookRotation(forward.normalized, Vector3.up)
-                : Quaternion.identity;
-
-            instanceMatrices[batchCount] = Matrix4x4.TRS(
-                simAgents[i].position,
-                rotation,
-                Vector3.one * instancedAgentScale);
-
-            batchCount++;
-
-            if (batchCount == MaxInstancesPerDrawCall)
+            for (int i = 0; i < simAgents.Length; i++)
             {
-                DrawInstancedBatch(drawMaterial, batchCount);
-                batchCount = 0;
+                Vector3 forward = simAgents[i].velocity.WithY(0f);
+                Quaternion rotation = forward.sqrMagnitude > 0.0001f
+                    ? Quaternion.LookRotation(forward.normalized, Vector3.up)
+                    : Quaternion.identity;
+
+                Matrix4x4 agentMatrix = Matrix4x4.TRS(
+                    simAgents[i].position,
+                    rotation,
+                    Vector3.one * instancedAgentScale);
+
+                instanceMatrices[batchCount] = agentMatrix * renderPart.localMatrix;
+                batchCount++;
+
+                if (batchCount == MaxInstancesPerDrawCall)
+                {
+                    DrawInstancedBatch(renderPart, batchCount);
+                    batchCount = 0;
+                }
+            }
+
+            if (batchCount > 0)
+            {
+                DrawInstancedBatch(renderPart, batchCount);
             }
         }
+    }
 
-        if (batchCount > 0)
+    private void DrawInstancedBatch(InstancedRenderPart renderPart, int batchCount)
+    {
+        int subMeshCount = Mathf.Min(renderPart.mesh.subMeshCount, renderPart.materials.Length);
+
+        for (int subMeshIndex = 0; subMeshIndex < subMeshCount; subMeshIndex++)
         {
-            DrawInstancedBatch(drawMaterial, batchCount);
+            Material drawMaterial = GetRuntimeInstancedMaterial(renderPart.materials[subMeshIndex]);
+
+            if (drawMaterial == null)
+            {
+                continue;
+            }
+
+            Graphics.DrawMeshInstanced(
+                renderPart.mesh,
+                subMeshIndex,
+                drawMaterial,
+                instanceMatrices,
+                batchCount,
+                null,
+                renderPart.shadowCastingMode,
+                renderPart.receiveShadows,
+                renderPart.layer);
         }
     }
 
-    private void DrawInstancedBatch(Material drawMaterial, int batchCount)
+    private Material GetRuntimeInstancedMaterial(Material sourceMaterial)
     {
-        Graphics.DrawMeshInstanced(
-            instancedAgentMesh,
-            0,
-            drawMaterial,
-            instanceMatrices,
-            batchCount,
-            null,
-            ShadowCastingMode.On,
-            true,
-            gameObject.layer);
-    }
-
-    private Material GetRuntimeInstancedMaterial()
-    {
-        if (instancedAgentMaterial == null)
+        if (sourceMaterial == null)
         {
             return null;
         }
 
-        if (runtimeInstancedAgentMaterial != null && runtimeMaterialSource == instancedAgentMaterial)
+        if (runtimeInstancedMaterials.TryGetValue(sourceMaterial, out Material runtimeMaterial))
         {
-            return runtimeInstancedAgentMaterial;
+            return runtimeMaterial;
         }
 
-        ReleaseRuntimeInstancedMaterial();
-
-        runtimeMaterialSource = instancedAgentMaterial;
-        runtimeInstancedAgentMaterial = new Material(instancedAgentMaterial)
+        runtimeMaterial = new Material(sourceMaterial)
         {
             enableInstancing = true,
             hideFlags = HideFlags.DontSave,
-            name = $"{instancedAgentMaterial.name} (Instanced Runtime)"
+            name = $"{sourceMaterial.name} (Instanced Runtime)"
         };
 
-        return runtimeInstancedAgentMaterial;
+        runtimeInstancedMaterials.Add(sourceMaterial, runtimeMaterial);
+        return runtimeMaterial;
     }
 
-    private void ReleaseRuntimeInstancedMaterial()
+    private void ReleaseRuntimeInstancedMaterials()
     {
-        if (runtimeInstancedAgentMaterial == null)
+        foreach (Material material in runtimeInstancedMaterials.Values)
         {
-            runtimeMaterialSource = null;
-            return;
+            if (material == null)
+            {
+                continue;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(material);
+            }
+            else
+            {
+                DestroyImmediate(material);
+            }
         }
 
-        if (Application.isPlaying)
-        {
-            Destroy(runtimeInstancedAgentMaterial);
-        }
-        else
-        {
-            DestroyImmediate(runtimeInstancedAgentMaterial);
-        }
-
-        runtimeInstancedAgentMaterial = null;
-        runtimeMaterialSource = null;
+        runtimeInstancedMaterials.Clear();
     }
 
     private Vector2Int GetSpatialCell(Vector3 position)
