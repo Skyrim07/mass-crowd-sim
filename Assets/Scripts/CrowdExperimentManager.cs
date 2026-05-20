@@ -2,9 +2,31 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Rendering;
 
 public class CrowdExperimentManager : MonoBehaviour
 {
+    public enum SimulationAlgorithm
+    {
+        BaselineNavMesh,
+        SpatialHashGpuInstanced
+    }
+
+    private struct SimAgent
+    {
+        public Vector3 position;
+        public Vector3 velocity;
+        public Vector3 target;
+        public float lowSpeedTimer;
+        public bool isStuck;
+        public int completedTasks;
+    }
+
+    private const int MaxInstancesPerDrawCall = 1023;
+
+    [Header("Algorithm")]
+    [SerializeField] private SimulationAlgorithm simulationAlgorithm = SimulationAlgorithm.BaselineNavMesh;
+
     [Header("Baseline Setup")]
     [SerializeField] private CrowdAgent agentPrefab;
     [SerializeField] private Vector2 spawnAreaSize = new Vector2(50f, 50f);
@@ -21,20 +43,53 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField] private int[] agentCountsToTest = { 50, 100, 200, 400, 800 };
     [SerializeField, Min(0f)] private float trialDurationSeconds = 30f;
 
+    [Header("Spatial Hash + GPU Instancing")]
+    [SerializeField] private Mesh instancedAgentMesh;
+    [SerializeField] private Material instancedAgentMaterial;
+    [SerializeField, Min(0.01f)] private float instancedAgentScale = 1f;
+    [SerializeField, Min(0.01f)] private float instancedAgentSpeed = 3.5f;
+    [SerializeField, Min(0.01f)] private float instancedTurnResponsiveness = 8f;
+    [SerializeField, Min(0.1f)] private float spatialCellSize = 2.5f;
+    [SerializeField, Min(0.1f)] private float neighborRadius = 1.5f;
+    [SerializeField, Min(0f)] private float separationStrength = 2.5f;
+    [SerializeField, Min(0.01f)] private float instancedTargetReachedDistance = 1.25f;
+    [SerializeField, Min(0f)] private float instancedStuckSpeedThreshold = 0.1f;
+    [SerializeField, Min(0f)] private float instancedStuckTimeThreshold = 2f;
+
     [Header("Debug UI")]
     [SerializeField] private bool showDebugUi = true;
 
     private readonly List<CrowdAgent> agents = new List<CrowdAgent>();
+    private readonly Dictionary<Vector2Int, List<int>> spatialGrid = new Dictionary<Vector2Int, List<int>>();
+    private readonly Matrix4x4[] instanceMatrices = new Matrix4x4[MaxInstancesPerDrawCall];
     private Coroutine scalingExperimentCoroutine;
+    private SimAgent[] simAgents;
+    private Material runtimeInstancedAgentMaterial;
+    private Material runtimeMaterialSource;
     private float smoothedDeltaTime;
-    private bool baselineMetricsRunning;
+    private bool metricsRunActive;
 
     public IReadOnlyList<CrowdAgent> Agents => agents;
-    public int ActiveAgentCount => agents.Count;
+    public int ActiveAgentCount => simulationAlgorithm == SimulationAlgorithm.BaselineNavMesh
+        ? agents.Count
+        : simAgents?.Length ?? 0;
 
     private void Update()
     {
         smoothedDeltaTime += (Time.unscaledDeltaTime - smoothedDeltaTime) * 0.1f;
+
+        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        {
+            UpdateSpatialHashSimulation(Time.deltaTime);
+        }
+    }
+
+    private void LateUpdate()
+    {
+        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        {
+            RenderSpatialHashAgents();
+        }
     }
 
     private void Start()
@@ -42,13 +97,14 @@ public class CrowdExperimentManager : MonoBehaviour
         if (spawnOnStart)
         {
             ResetExperiment();
-            BeginBaselineMetricsRun();
+            BeginMetricsRun();
         }
     }
 
     private void OnDisable()
     {
-        EndBaselineMetricsRun();
+        EndMetricsRun();
+        ReleaseRuntimeInstancedMaterial();
     }
 
     [ContextMenu("Run Scaling Experiment")]
@@ -59,7 +115,7 @@ public class CrowdExperimentManager : MonoBehaviour
             StopCoroutine(scalingExperimentCoroutine);
         }
 
-        EndBaselineMetricsRun();
+        EndMetricsRun();
         scalingExperimentCoroutine = StartCoroutine(RunScalingExperiment());
     }
 
@@ -79,7 +135,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
             if (metricsLogger != null)
             {
-                metricsLogger.BeginRun("Baseline", testAgentCount, GetTotalCompletedTasks);
+                metricsLogger.BeginRun(simulationAlgorithm.ToString(), testAgentCount, GetTotalCompletedTasks);
             }
 
             yield return new WaitForSeconds(trialDurationSeconds);
@@ -128,27 +184,53 @@ public class CrowdExperimentManager : MonoBehaviour
         GUILayout.BeginArea(contentRect);
         GUILayout.Label("Crowd Debug", titleStyle);
         GUILayout.Space(6f);
-        GUILayout.Label("Mode: Baseline", labelStyle);
-        GUILayout.Label($"Agents: {agents.Count}", labelStyle);
+        GUILayout.Label($"Mode: {simulationAlgorithm}", labelStyle);
+        GUILayout.Label($"Agents: {ActiveAgentCount}", labelStyle);
         GUILayout.Label($"FPS: {fps:F1}", labelStyle);
         GUILayout.Label($"Frame Time: {frameTimeMs:F2} ms", labelStyle);
         GUILayout.Label($"Stuck Agents: {GetStuckAgentCount()}", labelStyle);
         GUILayout.Label($"Completed Tasks: {GetTotalCompletedTasks()}", labelStyle);
         GUILayout.Label($"CSV: {csvPath}", labelStyle);
+        GUILayout.Space(8f);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("Baseline"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.BaselineNavMesh);
+        }
+
+        if (GUILayout.Button("Spatial GPU"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.SpatialHashGpuInstanced);
+        }
+
+        if (GUILayout.Button("Reset"))
+        {
+            RestartCurrentRun();
+        }
+
+        GUILayout.EndHorizontal();
         GUILayout.EndArea();
     }
 
     private void ResetExperiment(int count)
     {
         ClearExistingAgents();
+        ClearSpatialAgents();
+
+        Random.InitState(randomSeed);
+
+        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        {
+            InitializeSpatialHashAgents(count);
+            return;
+        }
 
         if (agentPrefab == null)
         {
             Debug.LogError("CrowdExperimentManager requires an agent prefab.");
             return;
         }
-
-        Random.InitState(randomSeed);
 
         for (int i = 0; i < count; i++)
         {
@@ -171,26 +253,50 @@ public class CrowdExperimentManager : MonoBehaviour
         }
     }
 
-    private void BeginBaselineMetricsRun()
+    private void SwitchAlgorithm(SimulationAlgorithm nextAlgorithm)
+    {
+        if (simulationAlgorithm == nextAlgorithm)
+        {
+            return;
+        }
+
+        simulationAlgorithm = nextAlgorithm;
+        RestartCurrentRun();
+    }
+
+    private void RestartCurrentRun()
+    {
+        if (scalingExperimentCoroutine != null)
+        {
+            StopCoroutine(scalingExperimentCoroutine);
+            scalingExperimentCoroutine = null;
+        }
+
+        EndMetricsRun();
+        ResetExperiment(agentCount);
+        BeginMetricsRun();
+    }
+
+    private void BeginMetricsRun()
     {
         if (metricsLogger == null)
         {
             return;
         }
 
-        metricsLogger.BeginRun("Baseline", agents.Count, GetTotalCompletedTasks);
-        baselineMetricsRunning = true;
+        metricsLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount, GetTotalCompletedTasks);
+        metricsRunActive = true;
     }
 
-    private void EndBaselineMetricsRun()
+    private void EndMetricsRun()
     {
-        if (!baselineMetricsRunning || metricsLogger == null)
+        if (!metricsRunActive || metricsLogger == null)
         {
             return;
         }
 
         metricsLogger.EndRun();
-        baselineMetricsRunning = false;
+        metricsRunActive = false;
     }
 
     private void ClearExistingAgents()
@@ -204,6 +310,327 @@ public class CrowdExperimentManager : MonoBehaviour
         }
 
         agents.Clear();
+    }
+
+    private void ClearSpatialAgents()
+    {
+        simAgents = null;
+        spatialGrid.Clear();
+    }
+
+    private void InitializeSpatialHashAgents(int count)
+    {
+        if (!TryResolveInstancedRenderingAssets())
+        {
+            Debug.LogError("SpatialHashGpuInstanced requires an agent mesh and material. Assign them directly or keep a renderable agent prefab assigned.");
+            return;
+        }
+
+        simAgents = new SimAgent[Mathf.Max(0, count)];
+
+        for (int i = 0; i < simAgents.Length; i++)
+        {
+            if (!TryGetRandomNavMeshPoint(out Vector3 spawnPosition))
+            {
+                Debug.LogWarning($"Could not find a valid spawn point for instanced agent {i}.");
+                spawnPosition = transform.position;
+            }
+
+            if (!TryGetRandomDestination(out Vector3 destination))
+            {
+                destination = transform.position;
+            }
+
+            simAgents[i] = new SimAgent
+            {
+                position = spawnPosition,
+                velocity = Random.insideUnitSphere.WithY(0f).normalized * instancedAgentSpeed,
+                target = destination,
+                lowSpeedTimer = 0f,
+                isStuck = false,
+                completedTasks = 0
+            };
+        }
+    }
+
+    private bool TryResolveInstancedRenderingAssets()
+    {
+        if (instancedAgentMesh != null && instancedAgentMaterial != null)
+        {
+            return true;
+        }
+
+        if (agentPrefab == null)
+        {
+            return false;
+        }
+
+        MeshFilter meshFilter = agentPrefab.GetComponentInChildren<MeshFilter>();
+        MeshRenderer meshRenderer = agentPrefab.GetComponentInChildren<MeshRenderer>();
+
+        if (instancedAgentMesh == null && meshFilter != null)
+        {
+            instancedAgentMesh = meshFilter.sharedMesh;
+        }
+
+        if (instancedAgentMaterial == null && meshRenderer != null)
+        {
+            instancedAgentMaterial = meshRenderer.sharedMaterial;
+        }
+
+        return instancedAgentMesh != null && instancedAgentMaterial != null;
+    }
+
+    private void UpdateSpatialHashSimulation(float deltaTime)
+    {
+        if (simAgents == null || simAgents.Length == 0)
+        {
+            return;
+        }
+
+        BuildSpatialGrid();
+
+        float neighborRadiusSqr = neighborRadius * neighborRadius;
+        float targetReachedDistanceSqr = instancedTargetReachedDistance * instancedTargetReachedDistance;
+        float steeringBlend = 1f - Mathf.Exp(-instancedTurnResponsiveness * deltaTime);
+        int cellSearchRadius = Mathf.Max(1, Mathf.CeilToInt(neighborRadius / spatialCellSize));
+
+        for (int i = 0; i < simAgents.Length; i++)
+        {
+            SimAgent agent = simAgents[i];
+            Vector3 toTarget = (agent.target - agent.position).WithY(0f);
+
+            if (toTarget.sqrMagnitude <= targetReachedDistanceSqr)
+            {
+                agent.completedTasks++;
+
+                if (TryGetRandomDestination(out Vector3 nextTarget))
+                {
+                    agent.target = nextTarget;
+                    toTarget = (agent.target - agent.position).WithY(0f);
+                }
+            }
+
+            Vector3 desiredVelocity = toTarget.sqrMagnitude > 0.0001f
+                ? toTarget.normalized * instancedAgentSpeed
+                : Vector3.zero;
+
+            desiredVelocity += CalculateSeparation(i, agent.position, neighborRadiusSqr, cellSearchRadius) * separationStrength;
+
+            if (desiredVelocity.sqrMagnitude > instancedAgentSpeed * instancedAgentSpeed)
+            {
+                desiredVelocity = desiredVelocity.normalized * instancedAgentSpeed;
+            }
+
+            Vector3 previousPosition = agent.position;
+            agent.velocity = Vector3.Lerp(agent.velocity, desiredVelocity, steeringBlend);
+            agent.position += agent.velocity * deltaTime;
+            agent.position = ClampToSpawnArea(agent.position);
+
+            float currentSpeed = deltaTime > 0f
+                ? (agent.position - previousPosition).magnitude / deltaTime
+                : 0f;
+
+            bool hasTarget = (agent.target - agent.position).WithY(0f).sqrMagnitude > targetReachedDistanceSqr;
+            bool movingTooSlowly = currentSpeed < instancedStuckSpeedThreshold;
+
+            if (hasTarget && movingTooSlowly)
+            {
+                agent.lowSpeedTimer += deltaTime;
+                agent.isStuck = agent.lowSpeedTimer > instancedStuckTimeThreshold;
+            }
+            else
+            {
+                agent.lowSpeedTimer = 0f;
+                agent.isStuck = false;
+            }
+
+            simAgents[i] = agent;
+        }
+    }
+
+    private void BuildSpatialGrid()
+    {
+        foreach (List<int> cellAgents in spatialGrid.Values)
+        {
+            cellAgents.Clear();
+        }
+
+        for (int i = 0; i < simAgents.Length; i++)
+        {
+            Vector2Int cell = GetSpatialCell(simAgents[i].position);
+
+            if (!spatialGrid.TryGetValue(cell, out List<int> cellAgents))
+            {
+                cellAgents = new List<int>();
+                spatialGrid.Add(cell, cellAgents);
+            }
+
+            cellAgents.Add(i);
+        }
+    }
+
+    private Vector3 CalculateSeparation(int agentIndex, Vector3 position, float neighborRadiusSqr, int cellSearchRadius)
+    {
+        Vector2Int centerCell = GetSpatialCell(position);
+        Vector3 separation = Vector3.zero;
+
+        for (int xOffset = -cellSearchRadius; xOffset <= cellSearchRadius; xOffset++)
+        {
+            for (int yOffset = -cellSearchRadius; yOffset <= cellSearchRadius; yOffset++)
+            {
+                Vector2Int neighborCell = new Vector2Int(centerCell.x + xOffset, centerCell.y + yOffset);
+
+                if (!spatialGrid.TryGetValue(neighborCell, out List<int> cellAgents))
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < cellAgents.Count; i++)
+                {
+                    int otherIndex = cellAgents[i];
+
+                    if (otherIndex == agentIndex)
+                    {
+                        continue;
+                    }
+
+                    Vector3 offset = (position - simAgents[otherIndex].position).WithY(0f);
+                    float distanceSqr = offset.sqrMagnitude;
+
+                    if (distanceSqr <= 0.0001f || distanceSqr > neighborRadiusSqr)
+                    {
+                        continue;
+                    }
+
+                    float distance = Mathf.Sqrt(distanceSqr);
+                    separation += offset / distance * (1f - distance / neighborRadius);
+                }
+            }
+        }
+
+        return separation;
+    }
+
+    private void RenderSpatialHashAgents()
+    {
+        if (simAgents == null || simAgents.Length == 0 || !TryResolveInstancedRenderingAssets())
+        {
+            return;
+        }
+
+        Material drawMaterial = GetRuntimeInstancedMaterial();
+
+        if (drawMaterial == null)
+        {
+            return;
+        }
+
+        int batchCount = 0;
+
+        for (int i = 0; i < simAgents.Length; i++)
+        {
+            Vector3 forward = simAgents[i].velocity.WithY(0f);
+            Quaternion rotation = forward.sqrMagnitude > 0.0001f
+                ? Quaternion.LookRotation(forward.normalized, Vector3.up)
+                : Quaternion.identity;
+
+            instanceMatrices[batchCount] = Matrix4x4.TRS(
+                simAgents[i].position,
+                rotation,
+                Vector3.one * instancedAgentScale);
+
+            batchCount++;
+
+            if (batchCount == MaxInstancesPerDrawCall)
+            {
+                DrawInstancedBatch(drawMaterial, batchCount);
+                batchCount = 0;
+            }
+        }
+
+        if (batchCount > 0)
+        {
+            DrawInstancedBatch(drawMaterial, batchCount);
+        }
+    }
+
+    private void DrawInstancedBatch(Material drawMaterial, int batchCount)
+    {
+        Graphics.DrawMeshInstanced(
+            instancedAgentMesh,
+            0,
+            drawMaterial,
+            instanceMatrices,
+            batchCount,
+            null,
+            ShadowCastingMode.On,
+            true,
+            gameObject.layer);
+    }
+
+    private Material GetRuntimeInstancedMaterial()
+    {
+        if (instancedAgentMaterial == null)
+        {
+            return null;
+        }
+
+        if (runtimeInstancedAgentMaterial != null && runtimeMaterialSource == instancedAgentMaterial)
+        {
+            return runtimeInstancedAgentMaterial;
+        }
+
+        ReleaseRuntimeInstancedMaterial();
+
+        runtimeMaterialSource = instancedAgentMaterial;
+        runtimeInstancedAgentMaterial = new Material(instancedAgentMaterial)
+        {
+            enableInstancing = true,
+            hideFlags = HideFlags.DontSave,
+            name = $"{instancedAgentMaterial.name} (Instanced Runtime)"
+        };
+
+        return runtimeInstancedAgentMaterial;
+    }
+
+    private void ReleaseRuntimeInstancedMaterial()
+    {
+        if (runtimeInstancedAgentMaterial == null)
+        {
+            runtimeMaterialSource = null;
+            return;
+        }
+
+        if (Application.isPlaying)
+        {
+            Destroy(runtimeInstancedAgentMaterial);
+        }
+        else
+        {
+            DestroyImmediate(runtimeInstancedAgentMaterial);
+        }
+
+        runtimeInstancedAgentMaterial = null;
+        runtimeMaterialSource = null;
+    }
+
+    private Vector2Int GetSpatialCell(Vector3 position)
+    {
+        return new Vector2Int(
+            Mathf.FloorToInt(position.x / spatialCellSize),
+            Mathf.FloorToInt(position.z / spatialCellSize));
+    }
+
+    private Vector3 ClampToSpawnArea(Vector3 position)
+    {
+        Vector3 center = transform.position;
+        float halfWidth = spawnAreaSize.x * 0.5f;
+        float halfDepth = spawnAreaSize.y * 0.5f;
+
+        position.x = Mathf.Clamp(position.x, center.x - halfWidth, center.x + halfWidth);
+        position.z = Mathf.Clamp(position.z, center.z - halfDepth, center.z + halfDepth);
+        return position;
     }
 
     private bool TryGetRandomNavMeshPoint(out Vector3 point)
@@ -229,6 +656,26 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private int GetStuckAgentCount()
     {
+        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        {
+            int instancedStuckCount = 0;
+
+            if (simAgents == null)
+            {
+                return instancedStuckCount;
+            }
+
+            for (int i = 0; i < simAgents.Length; i++)
+            {
+                if (simAgents[i].isStuck)
+                {
+                    instancedStuckCount++;
+                }
+            }
+
+            return instancedStuckCount;
+        }
+
         int stuckCount = 0;
 
         for (int i = 0; i < agents.Count; i++)
@@ -244,6 +691,23 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private int GetTotalCompletedTasks()
     {
+        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        {
+            int instancedCompletedTasks = 0;
+
+            if (simAgents == null)
+            {
+                return instancedCompletedTasks;
+            }
+
+            for (int i = 0; i < simAgents.Length; i++)
+            {
+                instancedCompletedTasks += simAgents[i].completedTasks;
+            }
+
+            return instancedCompletedTasks;
+        }
+
         int completedTasks = 0;
 
         for (int i = 0; i < agents.Count; i++)
@@ -255,5 +719,14 @@ public class CrowdExperimentManager : MonoBehaviour
         }
 
         return completedTasks;
+    }
+}
+
+internal static class CrowdVectorExtensions
+{
+    public static Vector3 WithY(this Vector3 value, float y)
+    {
+        value.y = y;
+        return value;
     }
 }

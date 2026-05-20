@@ -236,6 +236,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  simulationAlgorithm: 1
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
   agentCount: 10000
@@ -246,6 +247,17 @@ MonoBehaviour:
   metricsLogger: {fileID: 1755908057}
   agentCountsToTest: 3200000064000000c80000009001000020030000
   trialDurationSeconds: 30
+  instancedAgentMesh: {fileID: 0}
+  instancedAgentMaterial: {fileID: 0}
+  instancedAgentScale: 1
+  instancedAgentSpeed: 3.5
+  instancedTurnResponsiveness: 8
+  spatialCellSize: 2.5
+  neighborRadius: 1.5
+  separationStrength: 2.5
+  instancedTargetReachedDistance: 1.25
+  instancedStuckSpeedThreshold: 0.1
+  instancedStuckTimeThreshold: 2
   showDebugUi: 1
 --- !u!4 &998699049
 Transform:
