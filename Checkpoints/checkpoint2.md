@@ -16,7 +16,7 @@ Our first iteration of improving the baseline system focuses on reducing the amo
 This resulted in a much more efficient method for rendering the many agents, though it is limited to rendering copies of a single mesh, as shown by the experiments (defined in [checkpoint 1](./checkpoint1.md)) below.
 
 ### Experiments
-- **Agent Count vs Delta Time** 
+- **Agent Count vs Delta Time**  
 ![image](./Plots/dt_iter1.png)
 
 - **Agent Count vs FPS**  
