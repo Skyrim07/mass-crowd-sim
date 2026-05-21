@@ -13,7 +13,7 @@ In this checkpoint, we aim to expand upon the first checkpoint by incrementally 
 
 Our first iteration of improving the baseline system focuses on reducing the amount of CPU time spent on the rendering side of the simulation. Specifically, we implement spatial hashing and GPU instancing. This is a common technique used in computer graphics to reduce the number of expensive draw calls to the GPU by batching the many copies of the same mesh into a single draw call. To support an arbitrary number of agents, we partition the space into a grid of cells and issue one instanced draw call per cell (the Unity API has a maximum limit of 1023 instances for each instanced draw call; we may look into using a `ComputeBuffer` and `Graphics.DrawMeshInstancedIndirect` instead for future iterations, and compare the approaches).
 
-This resulted in a much more efficient method for rendering the many agents, though it is limited to rendering copies of a single mesh, as shown by the experiments (defined in [checkpoint 1](./checkpoint1.md)) below.
+This resulted in a much more efficient method for rendering the many agents, as shown by the experiments (defined in [checkpoint 1](./checkpoint1.md)) below. However, because of how GPU instancing works, the current approach is limited to rendering multiple copies of a single type of mesh.
 
 ### Experiments
 - **Agent Count vs Delta Time**  
