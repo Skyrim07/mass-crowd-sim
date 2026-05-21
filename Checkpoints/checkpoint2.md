@@ -11,7 +11,7 @@ In this checkpoint, we aim to expand upon the first checkpoint by incrementally 
 
 ### System Implementation
 
-Our first iteration of improving the baseline system focuses on reducing the amount of CPU time spent on the rendering side of the simulation. Specifically, we implement spatial hashing and GPU instancing. This is a common technique used in computer graphics to reduce the number of expensive draw calls to the GPU by batching the many copies of the same mesh into a single draw call. To support an arbitrary number of agents, we partition the space into a grid of cells and issue one instanced draw call per cell (the Unity API has a maximum limit of 1023 instances for each instanced draw call; we may look into using a `ComputeBuffer` and `Graphics.DrawMeshInstancedIndirect` instead for future iterations, and compare the approaches).
+Our first iteration of improving the baseline system focuses on reducing the amount of time spent on the rendering side of the simulation. Specifically, we implement spatial hashing and GPU instancing. This is a common technique used in computer graphics to reduce the number of expensive draw calls to the GPU by batching the many copies of the same mesh into a single draw call. To support an arbitrary number of agents, we partition the space into a grid of cells and issue one instanced draw call per cell (the Unity API has a maximum limit of 1023 instances for each instanced draw call; we may look into using a `ComputeBuffer` and `Graphics.DrawMeshInstancedIndirect` instead for future iterations, and compare the approaches).
 
 This resulted in a much more efficient method for rendering the many agents, as shown by the experiments (defined in [checkpoint 1](./checkpoint1.md)) below. However, because of how GPU instancing works, the current approach is limited to rendering multiple copies of a single type of mesh.
 
@@ -29,4 +29,4 @@ These results show a significant improvement in performance over the baseline sy
 
 ### Next Steps
 
-Currently, our implementation only optimizes the graphical aspect of the simulation. As our next iterations, we intend to implement a behavioral level-of-detail system while utilizing CPU multithreading and the Unity DOTS system (Unity's Entity Component System) for a more efficient, cache friendly approach.
+Currently, our implementation only optimizes the graphical aspect of the simulation. For our future iterations, we intend to implement a behavioral level-of-detail system while utilizing CPU multithreading and the Unity DOTS system (Unity's Entity Component System) for a more efficient, cache friendly approach.
