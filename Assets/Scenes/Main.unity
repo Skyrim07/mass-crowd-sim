@@ -38,7 +38,6 @@ RenderSettings:
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
   m_Sun: {fileID: 0}
-  m_IndirectSpecularColor: {r: 0.44657898, g: 0.4964133, b: 0.5748178, a: 1}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
@@ -236,10 +235,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulationAlgorithm: 1
+  simulationAlgorithm: 2
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
-  agentCount: 5000
+  agentCount: 10000
   randomSeed: 12345
   spawnOnStart: 1
   navMeshSampleMaxDistance: 4

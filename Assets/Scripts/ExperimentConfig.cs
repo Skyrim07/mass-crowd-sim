@@ -8,7 +8,8 @@ public class ExperimentConfig : ScriptableObject
         NaiveEveryAgentEveryFrame,
         CentralizedScheduling,
         SpatialPartitioning,
-        BehaviorLOD
+        BehaviorLOD,
+        DotsEcsGpuInstanced
     }
 
     [Header("Experiment")]

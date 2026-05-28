@@ -1,15 +1,19 @@
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Entities;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.Rendering;
+using Unity.Transforms;
 
 public class CrowdExperimentManager : MonoBehaviour
 {
     public enum SimulationAlgorithm
     {
         BaselineNavMesh,
-        SpatialHashGpuInstanced
+        SpatialHashGpuInstanced,
+        DotsEcsGpuInstanced
     }
 
     private struct SimAgent
@@ -76,13 +80,22 @@ public class CrowdExperimentManager : MonoBehaviour
     private readonly Matrix4x4[] instanceMatrices = new Matrix4x4[MaxInstancesPerDrawCall];
     private Coroutine scalingExperimentCoroutine;
     private SimAgent[] simAgents;
+    private EntityQuery ecsAgentQuery;
+    private EntityQuery ecsSettingsQuery;
+    private bool ecsQueriesInitialized;
+    private float nextEcsMetricSampleTime;
+    private int cachedEcsAgentCount;
+    private int cachedEcsStuckCount;
+    private int cachedEcsCompletedTasks;
     private float smoothedDeltaTime;
     private bool metricsRunActive;
 
     public IReadOnlyList<CrowdAgent> Agents => agents;
     public int ActiveAgentCount => simulationAlgorithm == SimulationAlgorithm.BaselineNavMesh
         ? agents.Count
-        : simAgents?.Length ?? 0;
+        : simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced
+            ? simAgents?.Length ?? 0
+            : GetEcsAgentCount();
 
     private void Update()
     {
@@ -100,6 +113,11 @@ public class CrowdExperimentManager : MonoBehaviour
         {
             RenderSpatialHashAgents();
         }
+
+        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        {
+            RenderEcsAgents();
+        }
     }
 
     private void Start()
@@ -115,6 +133,7 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         EndMetricsRun();
         ReleaseRuntimeInstancedMaterials();
+        ClearEcsAgents();
     }
 
     [ContextMenu("Run Scaling Experiment")]
@@ -214,6 +233,11 @@ public class CrowdExperimentManager : MonoBehaviour
             SwitchAlgorithm(SimulationAlgorithm.SpatialHashGpuInstanced);
         }
 
+        if (GUILayout.Button("DOTS ECS"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.DotsEcsGpuInstanced);
+        }
+
         if (GUILayout.Button("Reset"))
         {
             RestartCurrentRun();
@@ -227,8 +251,15 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         ClearExistingAgents();
         ClearSpatialAgents();
+        ClearEcsAgents();
 
         Random.InitState(randomSeed);
+
+        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        {
+            InitializeEcsAgents(count);
+            return;
+        }
 
         if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
         {
@@ -326,6 +357,107 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         simAgents = null;
         spatialGrid.Clear();
+    }
+
+    private void ClearEcsAgents()
+    {
+        if (!TryGetEntityManager(out EntityManager entityManager))
+        {
+            return;
+        }
+
+        EnsureEcsQueries(entityManager);
+
+        if (ecsQueriesInitialized)
+        {
+            entityManager.DestroyEntity(ecsAgentQuery);
+            entityManager.DestroyEntity(ecsSettingsQuery);
+            ecsAgentQuery = default;
+            ecsSettingsQuery = default;
+            ecsQueriesInitialized = false;
+        }
+
+        cachedEcsAgentCount = 0;
+        cachedEcsStuckCount = 0;
+        cachedEcsCompletedTasks = 0;
+        nextEcsMetricSampleTime = 0f;
+    }
+
+    private void InitializeEcsAgents(int count)
+    {
+        if (!TryResolveInstancedRenderingAssets())
+        {
+            Debug.LogError("DotsEcsGpuInstanced requires an agent mesh and material. Assign them directly or keep a renderable agent prefab assigned.");
+            return;
+        }
+
+        if (!TryGetEntityManager(out EntityManager entityManager))
+        {
+            Debug.LogError("No default ECS world is available. DOTS packages may still be importing.");
+            return;
+        }
+
+        EnsureEcsQueries(entityManager);
+
+        Entity settingsEntity = entityManager.CreateEntity(typeof(CrowdEcsSettings));
+        entityManager.SetComponentData(settingsEntity, new CrowdEcsSettings
+        {
+            Center = ToFloat3(transform.position),
+            SpawnAreaSize = new Unity.Mathematics.float2(spawnAreaSize.x, spawnAreaSize.y),
+            AgentSpeed = instancedAgentSpeed,
+            TurnResponsiveness = instancedTurnResponsiveness,
+            SpatialCellSize = spatialCellSize,
+            NeighborRadius = neighborRadius,
+            SeparationStrength = separationStrength,
+            TargetReachedDistance = instancedTargetReachedDistance,
+            StuckSpeedThreshold = instancedStuckSpeedThreshold,
+            StuckTimeThreshold = instancedStuckTimeThreshold
+        });
+
+        EntityArchetype agentArchetype = entityManager.CreateArchetype(
+            typeof(CrowdEcsAgent),
+            typeof(CrowdEcsRandom),
+            typeof(Translation),
+            typeof(Rotation),
+            typeof(LocalToWorld));
+
+        int safeCount = Mathf.Max(0, count);
+        cachedEcsAgentCount = safeCount;
+        cachedEcsStuckCount = 0;
+        cachedEcsCompletedTasks = 0;
+        nextEcsMetricSampleTime = 0f;
+
+        for (int i = 0; i < safeCount; i++)
+        {
+            if (!TryGetRandomNavMeshPoint(out Vector3 spawnPosition))
+            {
+                Debug.LogWarning($"Could not find a valid spawn point for DOTS ECS agent {i}.");
+                spawnPosition = transform.position;
+            }
+
+            if (!TryGetRandomDestination(out Vector3 destination))
+            {
+                destination = transform.position;
+            }
+
+            uint randomStateSeed = (uint)Mathf.Max(1, randomSeed + i + 1);
+            Unity.Mathematics.Random randomState = new Unity.Mathematics.Random(randomStateSeed);
+            Vector3 initialVelocity = Random.insideUnitSphere.WithY(0f).normalized * instancedAgentSpeed;
+
+            Entity agentEntity = entityManager.CreateEntity(agentArchetype);
+            entityManager.SetComponentData(agentEntity, new CrowdEcsAgent
+            {
+                Velocity = ToFloat3(initialVelocity),
+                Target = ToFloat3(destination),
+                LowSpeedTimer = 0f,
+                IsStuck = 0,
+                CompletedTasks = 0
+            });
+
+            entityManager.SetComponentData(agentEntity, new CrowdEcsRandom { Value = randomState });
+            entityManager.SetComponentData(agentEntity, new Translation { Value = ToFloat3(spawnPosition) });
+            entityManager.SetComponentData(agentEntity, new Rotation { Value = Unity.Mathematics.quaternion.identity });
+        }
     }
 
     private void InitializeSpatialHashAgents(int count)
@@ -598,6 +730,61 @@ public class CrowdExperimentManager : MonoBehaviour
         }
     }
 
+    private void RenderEcsAgents()
+    {
+        if (!TryGetEntityManager(out EntityManager entityManager) || !TryResolveInstancedRenderingAssets())
+        {
+            return;
+        }
+
+        EnsureEcsQueries(entityManager);
+
+        int agentCount = ecsAgentQuery.CalculateEntityCount();
+        if (agentCount == 0)
+        {
+            return;
+        }
+
+        NativeArray<Translation> translations = ecsAgentQuery.ToComponentDataArray<Translation>(Allocator.TempJob);
+        NativeArray<Rotation> rotations = ecsAgentQuery.ToComponentDataArray<Rotation>(Allocator.TempJob);
+
+        try
+        {
+            for (int partIndex = 0; partIndex < instancedRenderParts.Count; partIndex++)
+            {
+                InstancedRenderPart renderPart = instancedRenderParts[partIndex];
+                int batchCount = 0;
+
+                for (int i = 0; i < agentCount; i++)
+                {
+                    Matrix4x4 agentMatrix = Matrix4x4.TRS(
+                        ToVector3(translations[i].Value),
+                        ToQuaternion(rotations[i].Value),
+                        Vector3.one * instancedAgentScale);
+
+                    instanceMatrices[batchCount] = agentMatrix * renderPart.localMatrix;
+                    batchCount++;
+
+                    if (batchCount == MaxInstancesPerDrawCall)
+                    {
+                        DrawInstancedBatch(renderPart, batchCount);
+                        batchCount = 0;
+                    }
+                }
+
+                if (batchCount > 0)
+                {
+                    DrawInstancedBatch(renderPart, batchCount);
+                }
+            }
+        }
+        finally
+        {
+            rotations.Dispose();
+            translations.Dispose();
+        }
+    }
+
     private void DrawInstancedBatch(InstancedRenderPart renderPart, int batchCount)
     {
         int subMeshCount = Mathf.Min(renderPart.mesh.subMeshCount, renderPart.materials.Length);
@@ -669,6 +856,97 @@ public class CrowdExperimentManager : MonoBehaviour
         runtimeInstancedMaterials.Clear();
     }
 
+    private bool TryGetEntityManager(out EntityManager entityManager)
+    {
+        World world = World.DefaultGameObjectInjectionWorld;
+
+        if (world == null)
+        {
+            entityManager = default;
+            return false;
+        }
+
+        entityManager = world.EntityManager;
+        return true;
+    }
+
+    private void EnsureEcsQueries(EntityManager entityManager)
+    {
+        if (!ecsQueriesInitialized)
+        {
+            ecsAgentQuery = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<CrowdEcsAgent>(),
+                ComponentType.ReadOnly<Translation>(),
+                ComponentType.ReadOnly<Rotation>());
+
+            ecsSettingsQuery = entityManager.CreateEntityQuery(ComponentType.ReadOnly<CrowdEcsSettings>());
+            ecsQueriesInitialized = true;
+        }
+    }
+
+    private int GetEcsAgentCount()
+    {
+        RefreshEcsMetricCache(false);
+        return cachedEcsAgentCount;
+    }
+
+    private int GetEcsStuckAgentCount()
+    {
+        RefreshEcsMetricCache(false);
+        return cachedEcsStuckCount;
+    }
+
+    private int GetEcsCompletedTaskCount()
+    {
+        RefreshEcsMetricCache(false);
+        return cachedEcsCompletedTasks;
+    }
+
+    private void RefreshEcsMetricCache(bool force)
+    {
+        if (!TryGetEntityManager(out EntityManager entityManager))
+        {
+            cachedEcsAgentCount = 0;
+            cachedEcsStuckCount = 0;
+            cachedEcsCompletedTasks = 0;
+            return;
+        }
+
+        if (!force && Time.unscaledTime < nextEcsMetricSampleTime)
+        {
+            return;
+        }
+
+        EnsureEcsQueries(entityManager);
+
+        int stuckCount = 0;
+        int completedTasks = 0;
+        int agentCount = ecsAgentQuery.CalculateEntityCount();
+
+        if (agentCount > 0)
+        {
+            NativeArray<CrowdEcsAgent> ecsAgents = ecsAgentQuery.ToComponentDataArray<CrowdEcsAgent>(Allocator.TempJob);
+
+            try
+            {
+                for (int i = 0; i < ecsAgents.Length; i++)
+                {
+                    stuckCount += ecsAgents[i].IsStuck;
+                    completedTasks += ecsAgents[i].CompletedTasks;
+                }
+            }
+            finally
+            {
+                ecsAgents.Dispose();
+            }
+        }
+
+        cachedEcsAgentCount = agentCount;
+        cachedEcsStuckCount = stuckCount;
+        cachedEcsCompletedTasks = completedTasks;
+        nextEcsMetricSampleTime = Time.unscaledTime + 0.25f;
+    }
+
     private Vector2Int GetSpatialCell(Vector3 position)
     {
         return new Vector2Int(
@@ -708,6 +986,21 @@ public class CrowdExperimentManager : MonoBehaviour
         return false;
     }
 
+    private static Unity.Mathematics.float3 ToFloat3(Vector3 value)
+    {
+        return new Unity.Mathematics.float3(value.x, value.y, value.z);
+    }
+
+    private static Vector3 ToVector3(Unity.Mathematics.float3 value)
+    {
+        return new Vector3(value.x, value.y, value.z);
+    }
+
+    private static Quaternion ToQuaternion(Unity.Mathematics.quaternion value)
+    {
+        return new Quaternion(value.value.x, value.value.y, value.value.z, value.value.w);
+    }
+
     private int GetStuckAgentCount()
     {
         if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
@@ -728,6 +1021,11 @@ public class CrowdExperimentManager : MonoBehaviour
             }
 
             return instancedStuckCount;
+        }
+
+        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        {
+            return GetEcsStuckAgentCount();
         }
 
         int stuckCount = 0;
@@ -760,6 +1058,11 @@ public class CrowdExperimentManager : MonoBehaviour
             }
 
             return instancedCompletedTasks;
+        }
+
+        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        {
+            return GetEcsCompletedTaskCount();
         }
 
         int completedTasks = 0;
