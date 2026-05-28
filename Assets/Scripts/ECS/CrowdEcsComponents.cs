@@ -6,6 +6,8 @@ public struct CrowdEcsAgent : IComponentData
     public float3 Velocity;
     public float3 Target;
     public float LowSpeedTimer;
+    public int NextThinkTick;
+    public int LodLevel;
     public int IsStuck;
     public int CompletedTasks;
 }
@@ -27,4 +29,15 @@ public struct CrowdEcsSettings : IComponentData
     public float TargetReachedDistance;
     public float StuckSpeedThreshold;
     public float StuckTimeThreshold;
+    public int EnableBehaviorLod;
+    public float LodNearDistance;
+    public float LodMidDistance;
+    public float LodFarDistance;
+    public int LodNearTickInterval;
+    public int LodMidTickInterval;
+    public int LodFarTickInterval;
+    public int LodVeryFarTickInterval;
+    public float LodMidSeparationScale;
+    public float LodFarSeparationScale;
+    public float LodVeryFarSeparationScale;
 }

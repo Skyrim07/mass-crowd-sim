@@ -13,7 +13,8 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         BaselineNavMesh,
         SpatialHashGpuInstanced,
-        DotsEcsGpuInstanced
+        DotsEcsGpuInstanced,
+        DotsEcsBehaviorLodGpuInstanced
     }
 
     private struct SimAgent
@@ -48,7 +49,7 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField] private int randomSeed = 12345;
     [SerializeField] private bool spawnOnStart = true;
 
-    [Header("NavMesh Sampling")]
+    [Header("Baseline NavMesh Sampling")]
     [SerializeField, Min(0.1f)] private float navMeshSampleMaxDistance = 4f;
     [SerializeField, Min(1)] private int navMeshSampleAttempts = 20;
 
@@ -69,6 +70,18 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField, Min(0.01f)] private float instancedTargetReachedDistance = 1.25f;
     [SerializeField, Min(0f)] private float instancedStuckSpeedThreshold = 0.1f;
     [SerializeField, Min(0f)] private float instancedStuckTimeThreshold = 2f;
+
+    [Header("ECS Behavior LOD")]
+    [SerializeField, Min(0f)] private float ecsLodNearDistance = 12f;
+    [SerializeField, Min(0f)] private float ecsLodMidDistance = 24f;
+    [SerializeField, Min(0f)] private float ecsLodFarDistance = 38f;
+    [SerializeField, Min(1)] private int ecsLodNearTickInterval = 1;
+    [SerializeField, Min(1)] private int ecsLodMidTickInterval = 2;
+    [SerializeField, Min(1)] private int ecsLodFarTickInterval = 4;
+    [SerializeField, Min(1)] private int ecsLodVeryFarTickInterval = 8;
+    [SerializeField, Range(0f, 1f)] private float ecsLodMidSeparationScale = 0.65f;
+    [SerializeField, Range(0f, 1f)] private float ecsLodFarSeparationScale = 0.25f;
+    [SerializeField, Range(0f, 1f)] private float ecsLodVeryFarSeparationScale = 0f;
 
     [Header("Debug UI")]
     [SerializeField] private bool showDebugUi = true;
@@ -114,7 +127,7 @@ public class CrowdExperimentManager : MonoBehaviour
             RenderSpatialHashAgents();
         }
 
-        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        if (IsEcsAlgorithm(simulationAlgorithm))
         {
             RenderEcsAgents();
         }
@@ -180,7 +193,13 @@ public class CrowdExperimentManager : MonoBehaviour
 
     public bool TryGetRandomDestination(out Vector3 destination)
     {
-        return TryGetRandomNavMeshPoint(out destination);
+        if (simulationAlgorithm == SimulationAlgorithm.BaselineNavMesh)
+        {
+            return TryGetRandomNavMeshPoint(out destination);
+        }
+
+        destination = GetRandomSimulationPoint();
+        return true;
     }
 
     private void OnGUI()
@@ -238,6 +257,11 @@ public class CrowdExperimentManager : MonoBehaviour
             SwitchAlgorithm(SimulationAlgorithm.DotsEcsGpuInstanced);
         }
 
+        if (GUILayout.Button("ECS LOD"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced);
+        }
+
         if (GUILayout.Button("Reset"))
         {
             RestartCurrentRun();
@@ -255,9 +279,9 @@ public class CrowdExperimentManager : MonoBehaviour
 
         Random.InitState(randomSeed);
 
-        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        if (IsEcsAlgorithm(simulationAlgorithm))
         {
-            InitializeEcsAgents(count);
+            InitializeEcsAgents(count, simulationAlgorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced);
             return;
         }
 
@@ -316,6 +340,12 @@ public class CrowdExperimentManager : MonoBehaviour
         EndMetricsRun();
         ResetExperiment(agentCount);
         BeginMetricsRun();
+    }
+
+    private static bool IsEcsAlgorithm(SimulationAlgorithm algorithm)
+    {
+        return algorithm == SimulationAlgorithm.DotsEcsGpuInstanced
+            || algorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced;
     }
 
     private void BeginMetricsRun()
@@ -383,7 +413,7 @@ public class CrowdExperimentManager : MonoBehaviour
         nextEcsMetricSampleTime = 0f;
     }
 
-    private void InitializeEcsAgents(int count)
+    private void InitializeEcsAgents(int count, bool enableBehaviorLod)
     {
         if (!TryResolveInstancedRenderingAssets())
         {
@@ -399,6 +429,10 @@ public class CrowdExperimentManager : MonoBehaviour
 
         EnsureEcsQueries(entityManager);
 
+        float lodNearDistance = ecsLodNearDistance;
+        float lodMidDistance = Mathf.Max(lodNearDistance, ecsLodMidDistance);
+        float lodFarDistance = Mathf.Max(lodMidDistance, ecsLodFarDistance);
+
         Entity settingsEntity = entityManager.CreateEntity(typeof(CrowdEcsSettings));
         entityManager.SetComponentData(settingsEntity, new CrowdEcsSettings
         {
@@ -411,7 +445,18 @@ public class CrowdExperimentManager : MonoBehaviour
             SeparationStrength = separationStrength,
             TargetReachedDistance = instancedTargetReachedDistance,
             StuckSpeedThreshold = instancedStuckSpeedThreshold,
-            StuckTimeThreshold = instancedStuckTimeThreshold
+            StuckTimeThreshold = instancedStuckTimeThreshold,
+            EnableBehaviorLod = enableBehaviorLod ? 1 : 0,
+            LodNearDistance = lodNearDistance,
+            LodMidDistance = lodMidDistance,
+            LodFarDistance = lodFarDistance,
+            LodNearTickInterval = Mathf.Max(1, ecsLodNearTickInterval),
+            LodMidTickInterval = Mathf.Max(1, ecsLodMidTickInterval),
+            LodFarTickInterval = Mathf.Max(1, ecsLodFarTickInterval),
+            LodVeryFarTickInterval = Mathf.Max(1, ecsLodVeryFarTickInterval),
+            LodMidSeparationScale = ecsLodMidSeparationScale,
+            LodFarSeparationScale = ecsLodFarSeparationScale,
+            LodVeryFarSeparationScale = ecsLodVeryFarSeparationScale
         });
 
         EntityArchetype agentArchetype = entityManager.CreateArchetype(
@@ -429,16 +474,8 @@ public class CrowdExperimentManager : MonoBehaviour
 
         for (int i = 0; i < safeCount; i++)
         {
-            if (!TryGetRandomNavMeshPoint(out Vector3 spawnPosition))
-            {
-                Debug.LogWarning($"Could not find a valid spawn point for DOTS ECS agent {i}.");
-                spawnPosition = transform.position;
-            }
-
-            if (!TryGetRandomDestination(out Vector3 destination))
-            {
-                destination = transform.position;
-            }
+            Vector3 spawnPosition = GetRandomSimulationPoint();
+            Vector3 destination = GetRandomSimulationPoint();
 
             uint randomStateSeed = (uint)Mathf.Max(1, randomSeed + i + 1);
             Unity.Mathematics.Random randomState = new Unity.Mathematics.Random(randomStateSeed);
@@ -450,6 +487,8 @@ public class CrowdExperimentManager : MonoBehaviour
                 Velocity = ToFloat3(initialVelocity),
                 Target = ToFloat3(destination),
                 LowSpeedTimer = 0f,
+                NextThinkTick = enableBehaviorLod ? Random.Range(0, Mathf.Max(1, ecsLodVeryFarTickInterval)) : 0,
+                LodLevel = 0,
                 IsStuck = 0,
                 CompletedTasks = 0
             });
@@ -472,16 +511,8 @@ public class CrowdExperimentManager : MonoBehaviour
 
         for (int i = 0; i < simAgents.Length; i++)
         {
-            if (!TryGetRandomNavMeshPoint(out Vector3 spawnPosition))
-            {
-                Debug.LogWarning($"Could not find a valid spawn point for instanced agent {i}.");
-                spawnPosition = transform.position;
-            }
-
-            if (!TryGetRandomDestination(out Vector3 destination))
-            {
-                destination = transform.position;
-            }
+            Vector3 spawnPosition = GetRandomSimulationPoint();
+            Vector3 destination = GetRandomSimulationPoint();
 
             simAgents[i] = new SimAgent
             {
@@ -986,6 +1017,15 @@ public class CrowdExperimentManager : MonoBehaviour
         return false;
     }
 
+    private Vector3 GetRandomSimulationPoint()
+    {
+        Vector3 areaCenter = transform.position;
+        float x = Random.Range(-spawnAreaSize.x * 0.5f, spawnAreaSize.x * 0.5f);
+        float z = Random.Range(-spawnAreaSize.y * 0.5f, spawnAreaSize.y * 0.5f);
+
+        return areaCenter + new Vector3(x, 0f, z);
+    }
+
     private static Unity.Mathematics.float3 ToFloat3(Vector3 value)
     {
         return new Unity.Mathematics.float3(value.x, value.y, value.z);
@@ -1023,7 +1063,7 @@ public class CrowdExperimentManager : MonoBehaviour
             return instancedStuckCount;
         }
 
-        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        if (IsEcsAlgorithm(simulationAlgorithm))
         {
             return GetEcsStuckAgentCount();
         }
@@ -1060,7 +1100,7 @@ public class CrowdExperimentManager : MonoBehaviour
             return instancedCompletedTasks;
         }
 
-        if (simulationAlgorithm == SimulationAlgorithm.DotsEcsGpuInstanced)
+        if (IsEcsAlgorithm(simulationAlgorithm))
         {
             return GetEcsCompletedTaskCount();
         }

@@ -235,7 +235,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulationAlgorithm: 2
+  simulationAlgorithm: 3
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
   agentCount: 10000
@@ -257,6 +257,16 @@ MonoBehaviour:
   instancedTargetReachedDistance: 1.25
   instancedStuckSpeedThreshold: 0.1
   instancedStuckTimeThreshold: 2
+  ecsLodNearDistance: 12
+  ecsLodMidDistance: 24
+  ecsLodFarDistance: 38
+  ecsLodNearTickInterval: 1
+  ecsLodMidTickInterval: 2
+  ecsLodFarTickInterval: 4
+  ecsLodVeryFarTickInterval: 8
+  ecsLodMidSeparationScale: 0.65
+  ecsLodFarSeparationScale: 0.25
+  ecsLodVeryFarSeparationScale: 0
   showDebugUi: 1
 --- !u!4 &998699049
 Transform:

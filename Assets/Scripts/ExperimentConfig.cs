@@ -9,7 +9,8 @@ public class ExperimentConfig : ScriptableObject
         CentralizedScheduling,
         SpatialPartitioning,
         BehaviorLOD,
-        DotsEcsGpuInstanced
+        DotsEcsGpuInstanced,
+        DotsEcsBehaviorLodGpuInstanced
     }
 
     [Header("Experiment")]

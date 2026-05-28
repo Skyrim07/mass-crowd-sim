@@ -12,6 +12,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
     private EntityQuery agentQuery;
     private NativeArray<float3> positions;
     private NativeParallelMultiHashMap<long, int> spatialGrid;
+    private int simulationTick;
 
     protected override void OnCreate()
     {
@@ -50,6 +51,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
 
         CrowdEcsSettings settings = GetSingleton<CrowdEcsSettings>();
         float deltaTime = Time.DeltaTime;
+        simulationTick++;
 
         Dependency.Complete();
         EnsureNativeCapacity(agentCount);
@@ -77,7 +79,8 @@ public partial class CrowdEcsSimulationSystem : SystemBase
             Positions = positions,
             SpatialGrid = spatialGrid,
             Settings = settings,
-            DeltaTime = deltaTime
+            DeltaTime = deltaTime,
+            SimulationTick = simulationTick
         }.ScheduleParallel(agentQuery, buildGridHandle);
     }
 
@@ -146,6 +149,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
         [ReadOnly] public NativeParallelMultiHashMap<long, int> SpatialGrid;
         public CrowdEcsSettings Settings;
         public float DeltaTime;
+        public int SimulationTick;
 
         public void Execute(ArchetypeChunk chunk, int chunkIndex, int firstEntityIndex)
         {
@@ -158,6 +162,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
             float targetReachedDistanceSqr = Settings.TargetReachedDistance * Settings.TargetReachedDistance;
             float steeringBlend = 1f - math.exp(-Settings.TurnResponsiveness * DeltaTime);
             int cellSearchRadius = math.max(1, (int)math.ceil(Settings.NeighborRadius / Settings.SpatialCellSize));
+            bool behaviorLodEnabled = Settings.EnableBehaviorLod != 0;
 
             for (int i = 0; i < chunk.Count; i++)
             {
@@ -166,29 +171,54 @@ public partial class CrowdEcsSimulationSystem : SystemBase
                 CrowdEcsRandom randomState = randomStates[i];
                 float3 position = translations[i].Value;
                 float3 toTarget = Flatten(agent.Target - position);
+                bool reachedTarget = math.lengthsq(toTarget) <= targetReachedDistanceSqr;
 
-                if (math.lengthsq(toTarget) <= targetReachedDistanceSqr)
+                if (reachedTarget)
                 {
                     agent.CompletedTasks++;
                     agent.Target = GetRandomDestination(Settings, ref randomState.Value);
                     toTarget = Flatten(agent.Target - position);
                 }
 
-                float3 desiredVelocity = math.lengthsq(toTarget) > 0.0001f
-                    ? math.normalizesafe(toTarget) * Settings.AgentSpeed
-                    : float3.zero;
+                int lodLevel = behaviorLodEnabled
+                    ? GetLodLevel(position, Settings)
+                    : 0;
 
-                desiredVelocity += CalculateSeparation(agentIndex, position, Positions, Settings, SpatialGrid, neighborRadiusSqr, cellSearchRadius)
-                    * Settings.SeparationStrength;
+                int thinkInterval = behaviorLodEnabled
+                    ? GetThinkInterval(lodLevel, Settings)
+                    : 1;
 
-                float maxSpeedSqr = Settings.AgentSpeed * Settings.AgentSpeed;
-                if (math.lengthsq(desiredVelocity) > maxSpeedSqr)
+                bool shouldThink = !behaviorLodEnabled || reachedTarget || SimulationTick >= agent.NextThinkTick;
+
+                if (shouldThink)
                 {
-                    desiredVelocity = math.normalizesafe(desiredVelocity) * Settings.AgentSpeed;
+                    float3 desiredVelocity = math.lengthsq(toTarget) > 0.0001f
+                        ? math.normalizesafe(toTarget) * Settings.AgentSpeed
+                        : float3.zero;
+
+                    float separationScale = behaviorLodEnabled
+                        ? GetSeparationScale(lodLevel, Settings)
+                        : 1f;
+
+                    if (separationScale > 0f)
+                    {
+                        desiredVelocity += CalculateSeparation(agentIndex, position, Positions, Settings, SpatialGrid, neighborRadiusSqr, cellSearchRadius)
+                            * Settings.SeparationStrength
+                            * separationScale;
+                    }
+
+                    float maxSpeedSqr = Settings.AgentSpeed * Settings.AgentSpeed;
+                    if (math.lengthsq(desiredVelocity) > maxSpeedSqr)
+                    {
+                        desiredVelocity = math.normalizesafe(desiredVelocity) * Settings.AgentSpeed;
+                    }
+
+                    agent.Velocity = math.lerp(agent.Velocity, desiredVelocity, steeringBlend);
+                    agent.NextThinkTick = SimulationTick + thinkInterval;
+                    agent.LodLevel = lodLevel;
                 }
 
                 float3 previousPosition = position;
-                agent.Velocity = math.lerp(agent.Velocity, desiredVelocity, steeringBlend);
                 position += agent.Velocity * DeltaTime;
                 position = ClampToSpawnArea(position, Settings);
 
@@ -221,6 +251,61 @@ public partial class CrowdEcsSimulationSystem : SystemBase
                 agents[i] = agent;
                 randomStates[i] = randomState;
             }
+        }
+    }
+
+    private static int GetLodLevel(float3 position, CrowdEcsSettings settings)
+    {
+        float distanceSqr = math.lengthsq(Flatten(position - settings.Center));
+        float nearSqr = settings.LodNearDistance * settings.LodNearDistance;
+        float midSqr = settings.LodMidDistance * settings.LodMidDistance;
+        float farSqr = settings.LodFarDistance * settings.LodFarDistance;
+
+        if (distanceSqr <= nearSqr)
+        {
+            return 0;
+        }
+
+        if (distanceSqr <= midSqr)
+        {
+            return 1;
+        }
+
+        if (distanceSqr <= farSqr)
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static int GetThinkInterval(int lodLevel, CrowdEcsSettings settings)
+    {
+        switch (lodLevel)
+        {
+            case 0:
+                return math.max(1, settings.LodNearTickInterval);
+            case 1:
+                return math.max(1, settings.LodMidTickInterval);
+            case 2:
+                return math.max(1, settings.LodFarTickInterval);
+            default:
+                return math.max(1, settings.LodVeryFarTickInterval);
+        }
+    }
+
+    private static float GetSeparationScale(int lodLevel, CrowdEcsSettings settings)
+    {
+        switch (lodLevel)
+        {
+            case 0:
+                return 1f;
+            case 1:
+                return settings.LodMidSeparationScale;
+            case 2:
+                return settings.LodFarSeparationScale;
+            default:
+                return settings.LodVeryFarSeparationScale;
         }
     }
 
