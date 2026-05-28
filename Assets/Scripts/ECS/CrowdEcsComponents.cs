@@ -29,6 +29,7 @@ public struct CrowdEcsSettings : IComponentData
     public float TargetReachedDistance;
     public float StuckSpeedThreshold;
     public float StuckTimeThreshold;
+    public int EnableLearnedPolicy;
     public int EnableBehaviorLod;
     public float LodNearDistance;
     public float LodMidDistance;

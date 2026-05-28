@@ -9,8 +9,11 @@ public class ExperimentConfig : ScriptableObject
         CentralizedScheduling,
         SpatialPartitioning,
         BehaviorLOD,
+        SpatialHashTeacherTrainingData,
+        LearnedPolicyGpuInstanced,
         DotsEcsGpuInstanced,
-        DotsEcsBehaviorLodGpuInstanced
+        DotsEcsBehaviorLodGpuInstanced,
+        EcsLearnedPolicyGpuInstanced
     }
 
     [Header("Experiment")]

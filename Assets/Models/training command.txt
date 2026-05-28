@@ -1,0 +1,1 @@
+python PythonScripts\train_crowd_policy.py "$env:USERPROFILE\AppData\LocalLow\DefaultCompany\mass-crowd-sim\crowd_training_data.csv" --output models\crowd_policy.pt --onnx-output models\crowd_policy.onnx --epochs 50

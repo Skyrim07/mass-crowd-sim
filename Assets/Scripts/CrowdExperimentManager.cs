@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Barracuda;
 using Unity.Collections;
 using Unity.Entities;
 using UnityEngine;
@@ -13,8 +14,11 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         BaselineNavMesh,
         SpatialHashGpuInstanced,
+        SpatialHashTeacherTrainingData,
+        LearnedPolicyGpuInstanced,
         DotsEcsGpuInstanced,
-        DotsEcsBehaviorLodGpuInstanced
+        DotsEcsBehaviorLodGpuInstanced,
+        EcsLearnedPolicyGpuInstanced
     }
 
     private struct SimAgent
@@ -37,7 +41,16 @@ public class CrowdExperimentManager : MonoBehaviour
         public int layer;
     }
 
+    private struct NeighborObservation
+    {
+        public Vector3 separation;
+        public Vector3 nearestOffset;
+        public float nearestDistance;
+        public int neighborCount;
+    }
+
     private const int MaxInstancesPerDrawCall = 1023;
+    private const int LearnedPolicyFeatureCount = 12;
 
     [Header("Algorithm")]
     [SerializeField] private SimulationAlgorithm simulationAlgorithm = SimulationAlgorithm.BaselineNavMesh;
@@ -57,6 +70,18 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField] private MetricsLogger metricsLogger;
     [SerializeField] private int[] agentCountsToTest = { 50, 100, 200, 400, 800 };
     [SerializeField, Min(0f)] private float trialDurationSeconds = 30f;
+
+    [Header("AI Training Data")]
+    [SerializeField] private CrowdTrainingDataLogger trainingDataLogger;
+    [SerializeField] private bool collectSpatialTeacherTrainingData = false;
+    [SerializeField, Min(1)] private int maxTrainingSamplesPerFrame = 256;
+    [SerializeField, Min(1)] private int trainingSampleFrameInterval = 2;
+
+    [Header("Learned Policy")]
+    [SerializeField] private NNModel learnedPolicyModelAsset;
+    [SerializeField] private WorkerFactory.Type learnedPolicyWorkerType = WorkerFactory.Type.Auto;
+    [SerializeField, Min(1)] private int learnedPolicyBatchSize = 512;
+    [SerializeField, Range(0f, 1f)] private float learnedPolicyVelocityBlend = 1f;
 
     [Header("Spatial Hash + GPU Instancing")]
     [SerializeField] private Mesh instancedAgentMesh;
@@ -100,13 +125,20 @@ public class CrowdExperimentManager : MonoBehaviour
     private int cachedEcsAgentCount;
     private int cachedEcsStuckCount;
     private int cachedEcsCompletedTasks;
+    private int trainingSampleCursor;
+    private int trainingFrameCounter;
+    private Model learnedPolicyModel;
+    private IWorker learnedPolicyWorker;
+    private Vector3[] learnedPolicyDesiredVelocities;
+    private float[] learnedPolicyInputBuffer;
+    private bool learnedPolicyWarningShown;
     private float smoothedDeltaTime;
     private bool metricsRunActive;
 
     public IReadOnlyList<CrowdAgent> Agents => agents;
     public int ActiveAgentCount => simulationAlgorithm == SimulationAlgorithm.BaselineNavMesh
         ? agents.Count
-        : simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced
+        : IsSpatialAlgorithm(simulationAlgorithm)
             ? simAgents?.Length ?? 0
             : GetEcsAgentCount();
 
@@ -114,15 +146,20 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         smoothedDeltaTime += (Time.unscaledDeltaTime - smoothedDeltaTime) * 0.1f;
 
-        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        if (IsSpatialAlgorithm(simulationAlgorithm))
         {
             UpdateSpatialHashSimulation(Time.deltaTime);
+        }
+
+        if (simulationAlgorithm == SimulationAlgorithm.EcsLearnedPolicyGpuInstanced)
+        {
+            EvaluateEcsLearnedPolicy();
         }
     }
 
     private void LateUpdate()
     {
-        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        if (IsSpatialAlgorithm(simulationAlgorithm))
         {
             RenderSpatialHashAgents();
         }
@@ -146,6 +183,7 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         EndMetricsRun();
         ReleaseRuntimeInstancedMaterials();
+        ReleaseLearnedPolicyWorker();
         ClearEcsAgents();
     }
 
@@ -225,8 +263,8 @@ public class CrowdExperimentManager : MonoBehaviour
             wordWrap = true
         };
 
-        Rect panelRect = new Rect(10f, 10f, 560f, 275f);
-        Rect contentRect = new Rect(24f, 22f, 532f, 250f);
+        Rect panelRect = new Rect(10f, 10f, 720f, 345f);
+        Rect contentRect = new Rect(24f, 22f, 692f, 320f);
 
         GUI.Box(panelRect, string.Empty);
         GUILayout.BeginArea(contentRect);
@@ -252,6 +290,19 @@ public class CrowdExperimentManager : MonoBehaviour
             SwitchAlgorithm(SimulationAlgorithm.SpatialHashGpuInstanced);
         }
 
+        if (GUILayout.Button("AI Data"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.SpatialHashTeacherTrainingData);
+        }
+
+        if (GUILayout.Button("Learned"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.LearnedPolicyGpuInstanced);
+        }
+
+        GUILayout.EndHorizontal();
+        GUILayout.BeginHorizontal();
+
         if (GUILayout.Button("DOTS ECS"))
         {
             SwitchAlgorithm(SimulationAlgorithm.DotsEcsGpuInstanced);
@@ -260,6 +311,11 @@ public class CrowdExperimentManager : MonoBehaviour
         if (GUILayout.Button("ECS LOD"))
         {
             SwitchAlgorithm(SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced);
+        }
+
+        if (GUILayout.Button("ECS Learned"))
+        {
+            SwitchAlgorithm(SimulationAlgorithm.EcsLearnedPolicyGpuInstanced);
         }
 
         if (GUILayout.Button("Reset"))
@@ -281,11 +337,14 @@ public class CrowdExperimentManager : MonoBehaviour
 
         if (IsEcsAlgorithm(simulationAlgorithm))
         {
-            InitializeEcsAgents(count, simulationAlgorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced);
+            InitializeEcsAgents(
+                count,
+                simulationAlgorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced,
+                simulationAlgorithm == SimulationAlgorithm.EcsLearnedPolicyGpuInstanced);
             return;
         }
 
-        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        if (IsSpatialAlgorithm(simulationAlgorithm))
         {
             InitializeSpatialHashAgents(count);
             return;
@@ -345,22 +404,40 @@ public class CrowdExperimentManager : MonoBehaviour
     private static bool IsEcsAlgorithm(SimulationAlgorithm algorithm)
     {
         return algorithm == SimulationAlgorithm.DotsEcsGpuInstanced
-            || algorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced;
+            || algorithm == SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced
+            || algorithm == SimulationAlgorithm.EcsLearnedPolicyGpuInstanced;
+    }
+
+    private static bool IsSpatialAlgorithm(SimulationAlgorithm algorithm)
+    {
+        return algorithm == SimulationAlgorithm.SpatialHashGpuInstanced
+            || algorithm == SimulationAlgorithm.SpatialHashTeacherTrainingData
+            || algorithm == SimulationAlgorithm.LearnedPolicyGpuInstanced;
+    }
+
+    private static bool IsLearnedPolicyAlgorithm(SimulationAlgorithm algorithm)
+    {
+        return algorithm == SimulationAlgorithm.LearnedPolicyGpuInstanced
+            || algorithm == SimulationAlgorithm.EcsLearnedPolicyGpuInstanced;
     }
 
     private void BeginMetricsRun()
     {
         if (metricsLogger == null)
         {
+            BeginTrainingDataRun();
             return;
         }
 
         metricsLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount, GetTotalCompletedTasks);
         metricsRunActive = true;
+        BeginTrainingDataRun();
     }
 
     private void EndMetricsRun()
     {
+        EndTrainingDataRun();
+
         if (!metricsRunActive || metricsLogger == null)
         {
             return;
@@ -368,6 +445,43 @@ public class CrowdExperimentManager : MonoBehaviour
 
         metricsLogger.EndRun();
         metricsRunActive = false;
+    }
+
+    private void BeginTrainingDataRun()
+    {
+        trainingSampleCursor = 0;
+        trainingFrameCounter = 0;
+
+        if ((collectSpatialTeacherTrainingData || simulationAlgorithm == SimulationAlgorithm.SpatialHashTeacherTrainingData)
+            && trainingDataLogger == null)
+        {
+            trainingDataLogger = GetComponent<CrowdTrainingDataLogger>();
+
+            if (trainingDataLogger == null)
+            {
+                trainingDataLogger = gameObject.AddComponent<CrowdTrainingDataLogger>();
+            }
+        }
+
+        if (!ShouldCollectSpatialTrainingData())
+        {
+            trainingDataLogger?.EndRun();
+            return;
+        }
+
+        trainingDataLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount);
+    }
+
+    private void EndTrainingDataRun()
+    {
+        trainingDataLogger?.EndRun();
+    }
+
+    private bool ShouldCollectSpatialTrainingData()
+    {
+        return (collectSpatialTeacherTrainingData || simulationAlgorithm == SimulationAlgorithm.SpatialHashTeacherTrainingData)
+            && trainingDataLogger != null
+            && IsSpatialAlgorithm(simulationAlgorithm);
     }
 
     private void ClearExistingAgents()
@@ -413,7 +527,7 @@ public class CrowdExperimentManager : MonoBehaviour
         nextEcsMetricSampleTime = 0f;
     }
 
-    private void InitializeEcsAgents(int count, bool enableBehaviorLod)
+    private void InitializeEcsAgents(int count, bool enableBehaviorLod, bool enableLearnedPolicy)
     {
         if (!TryResolveInstancedRenderingAssets())
         {
@@ -446,6 +560,7 @@ public class CrowdExperimentManager : MonoBehaviour
             TargetReachedDistance = instancedTargetReachedDistance,
             StuckSpeedThreshold = instancedStuckSpeedThreshold,
             StuckTimeThreshold = instancedStuckTimeThreshold,
+            EnableLearnedPolicy = enableLearnedPolicy ? 1 : 0,
             EnableBehaviorLod = enableBehaviorLod ? 1 : 0,
             LodNearDistance = lodNearDistance,
             LodMidDistance = lodMidDistance,
@@ -597,6 +712,10 @@ public class CrowdExperimentManager : MonoBehaviour
         }
 
         BuildSpatialGrid();
+        bool collectTrainingDataThisFrame = ShouldRecordTrainingDataThisFrame();
+        bool useLearnedPolicy = IsLearnedPolicyAlgorithm(simulationAlgorithm)
+            && TryEvaluateLearnedPolicy(neighborRadius * neighborRadius, Mathf.Max(1, Mathf.CeilToInt(neighborRadius / spatialCellSize)));
+        int recordedTrainingSamples = 0;
 
         float neighborRadiusSqr = neighborRadius * neighborRadius;
         float targetReachedDistanceSqr = instancedTargetReachedDistance * instancedTargetReachedDistance;
@@ -623,11 +742,35 @@ public class CrowdExperimentManager : MonoBehaviour
                 ? toTarget.normalized * instancedAgentSpeed
                 : Vector3.zero;
 
-            desiredVelocity += CalculateSeparation(i, agent.position, neighborRadiusSqr, cellSearchRadius) * separationStrength;
+            NeighborObservation neighborObservation = CalculateNeighborObservation(i, agent.position, neighborRadiusSqr, cellSearchRadius);
+            if (useLearnedPolicy)
+            {
+                desiredVelocity = Vector3.Lerp(desiredVelocity, learnedPolicyDesiredVelocities[i], learnedPolicyVelocityBlend);
+            }
+            else
+            {
+                desiredVelocity += neighborObservation.separation * separationStrength;
+            }
 
             if (desiredVelocity.sqrMagnitude > instancedAgentSpeed * instancedAgentSpeed)
             {
                 desiredVelocity = desiredVelocity.normalized * instancedAgentSpeed;
+            }
+
+            if (collectTrainingDataThisFrame && ShouldRecordTrainingSample(i, ref recordedTrainingSamples))
+            {
+                trainingDataLogger.RecordSample(
+                    Time.time,
+                    i,
+                    agent.position,
+                    toTarget,
+                    agent.velocity,
+                    agent.velocity.magnitude,
+                    neighborObservation.nearestOffset,
+                    neighborObservation.nearestDistance,
+                    neighborObservation.neighborCount,
+                    GetBoundaryDistance(agent.position),
+                    desiredVelocity);
             }
 
             Vector3 previousPosition = agent.position;
@@ -655,6 +798,301 @@ public class CrowdExperimentManager : MonoBehaviour
 
             simAgents[i] = agent;
         }
+
+        if (collectTrainingDataThisFrame)
+        {
+            trainingFrameCounter = 0;
+        }
+    }
+
+    private bool ShouldRecordTrainingDataThisFrame()
+    {
+        if (!ShouldCollectSpatialTrainingData() || !trainingDataLogger.IsRecording)
+        {
+            return false;
+        }
+
+        trainingFrameCounter++;
+        return trainingFrameCounter >= trainingSampleFrameInterval;
+    }
+
+    private bool ShouldRecordTrainingSample(int agentIndex, ref int recordedSamples)
+    {
+        if (recordedSamples >= maxTrainingSamplesPerFrame)
+        {
+            return false;
+        }
+
+        if (agentIndex != trainingSampleCursor)
+        {
+            return false;
+        }
+
+        recordedSamples++;
+        trainingSampleCursor = (trainingSampleCursor + 1) % Mathf.Max(1, simAgents.Length);
+
+        return true;
+    }
+
+    private bool TryEvaluateLearnedPolicy(float neighborRadiusSqr, int cellSearchRadius)
+    {
+        if (!TryPrepareLearnedPolicy())
+        {
+            return false;
+        }
+
+        EnsureLearnedPolicyBuffers(simAgents.Length);
+
+        int batchCapacity = Mathf.Max(1, learnedPolicyBatchSize);
+        int agentIndex = 0;
+
+        while (agentIndex < simAgents.Length)
+        {
+            int batchCount = Mathf.Min(batchCapacity, simAgents.Length - agentIndex);
+
+            for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+            {
+                int currentAgentIndex = agentIndex + batchIndex;
+                SimAgent agent = simAgents[currentAgentIndex];
+                NeighborObservation neighborObservation = CalculateNeighborObservation(
+                    currentAgentIndex,
+                    agent.position,
+                    neighborRadiusSqr,
+                    cellSearchRadius);
+
+                WriteLearnedPolicyFeatures(batchIndex, agent, neighborObservation);
+            }
+
+            ExecuteLearnedPolicyBatch(batchCount, agentIndex);
+
+            agentIndex += batchCount;
+        }
+
+        return true;
+    }
+
+    private void EvaluateEcsLearnedPolicy()
+    {
+        if (!TryGetEntityManager(out EntityManager entityManager) || !TryPrepareLearnedPolicy())
+        {
+            return;
+        }
+
+        EnsureEcsQueries(entityManager);
+
+        int agentCount = ecsAgentQuery.CalculateEntityCount();
+        if (agentCount == 0)
+        {
+            return;
+        }
+
+        EnsureLearnedPolicyBuffers(agentCount);
+
+        NativeArray<Entity> entities = ecsAgentQuery.ToEntityArray(Allocator.TempJob);
+        NativeArray<CrowdEcsAgent> ecsAgents = ecsAgentQuery.ToComponentDataArray<CrowdEcsAgent>(Allocator.TempJob);
+        NativeArray<Translation> translations = ecsAgentQuery.ToComponentDataArray<Translation>(Allocator.TempJob);
+
+        try
+        {
+            BuildEcsSpatialGrid(translations);
+            float neighborRadiusSqr = neighborRadius * neighborRadius;
+            int cellSearchRadius = Mathf.Max(1, Mathf.CeilToInt(neighborRadius / spatialCellSize));
+            float steeringBlend = 1f - Mathf.Exp(-instancedTurnResponsiveness * Time.deltaTime);
+            int batchCapacity = Mathf.Max(1, learnedPolicyBatchSize);
+            int agentIndex = 0;
+
+            while (agentIndex < agentCount)
+            {
+                int batchCount = Mathf.Min(batchCapacity, agentCount - agentIndex);
+
+                for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+                {
+                    int currentAgentIndex = agentIndex + batchIndex;
+                    CrowdEcsAgent agent = ecsAgents[currentAgentIndex];
+                    Vector3 position = ToVector3(translations[currentAgentIndex].Value);
+                    NeighborObservation neighborObservation = CalculateEcsNeighborObservation(
+                        currentAgentIndex,
+                        position,
+                        translations,
+                        neighborRadiusSqr,
+                        cellSearchRadius);
+
+                    WriteLearnedPolicyFeatures(batchIndex, agent, position, neighborObservation);
+                }
+
+                ExecuteLearnedPolicyBatch(batchCount, agentIndex);
+
+                for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+                {
+                    int currentAgentIndex = agentIndex + batchIndex;
+                    CrowdEcsAgent agent = ecsAgents[currentAgentIndex];
+                    Vector3 position = ToVector3(translations[currentAgentIndex].Value);
+                    Vector3 toTarget = (ToVector3(agent.Target) - position).WithY(0f);
+                    Vector3 targetVelocity = toTarget.sqrMagnitude > 0.0001f
+                        ? toTarget.normalized * instancedAgentSpeed
+                        : Vector3.zero;
+
+                    Vector3 predictedVelocity = Vector3.Lerp(
+                        targetVelocity,
+                        learnedPolicyDesiredVelocities[currentAgentIndex],
+                        learnedPolicyVelocityBlend);
+
+                    if (predictedVelocity.sqrMagnitude > instancedAgentSpeed * instancedAgentSpeed)
+                    {
+                        predictedVelocity = predictedVelocity.normalized * instancedAgentSpeed;
+                    }
+
+                    Vector3 blendedVelocity = Vector3.Lerp(ToVector3(agent.Velocity), predictedVelocity, steeringBlend);
+                    agent.Velocity = ToFloat3(blendedVelocity);
+                    ecsAgents[currentAgentIndex] = agent;
+                    entityManager.SetComponentData(entities[currentAgentIndex], agent);
+                }
+
+                agentIndex += batchCount;
+            }
+        }
+        finally
+        {
+            translations.Dispose();
+            ecsAgents.Dispose();
+            entities.Dispose();
+        }
+    }
+
+    private void ExecuteLearnedPolicyBatch(int batchCount, int destinationOffset)
+    {
+        int inputCount = batchCount * LearnedPolicyFeatureCount;
+        float[] tensorInput = learnedPolicyInputBuffer;
+
+        if (inputCount != learnedPolicyInputBuffer.Length)
+        {
+            tensorInput = new float[inputCount];
+            System.Array.Copy(learnedPolicyInputBuffer, tensorInput, inputCount);
+        }
+
+        using (Tensor input = new Tensor(batchCount, 1, 1, LearnedPolicyFeatureCount, tensorInput))
+        {
+            learnedPolicyWorker.Execute(input);
+            Tensor output = learnedPolicyWorker.PeekOutput();
+
+            for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+            {
+                float desiredX = output[batchIndex, 0, 0, 0];
+                float desiredZ = output[batchIndex, 0, 0, 1];
+                Vector3 desiredVelocity = new Vector3(desiredX, 0f, desiredZ);
+
+                if (float.IsNaN(desiredVelocity.x) || float.IsInfinity(desiredVelocity.x)
+                    || float.IsNaN(desiredVelocity.z) || float.IsInfinity(desiredVelocity.z))
+                {
+                    desiredVelocity = Vector3.zero;
+                }
+
+                learnedPolicyDesiredVelocities[destinationOffset + batchIndex] = desiredVelocity;
+            }
+        }
+    }
+
+    private bool TryPrepareLearnedPolicy()
+    {
+        if (learnedPolicyWorker != null)
+        {
+            return true;
+        }
+
+        if (learnedPolicyModelAsset == null)
+        {
+            learnedPolicyModelAsset = TryLoadDefaultLearnedPolicyAsset();
+        }
+
+        if (learnedPolicyModelAsset == null)
+        {
+            if (!learnedPolicyWarningShown)
+            {
+                Debug.LogWarning("Learned policy experiments require a Barracuda NNModel. Import Assets/Models/crowd_policy.onnx and assign it to Learned Policy Model Asset.");
+                learnedPolicyWarningShown = true;
+            }
+
+            return false;
+        }
+
+        learnedPolicyModel = ModelLoader.Load(learnedPolicyModelAsset);
+        learnedPolicyWorker = WorkerFactory.CreateWorker(learnedPolicyWorkerType, learnedPolicyModel);
+        learnedPolicyWarningShown = false;
+        return true;
+    }
+
+    private NNModel TryLoadDefaultLearnedPolicyAsset()
+    {
+#if UNITY_EDITOR
+        return UnityEditor.AssetDatabase.LoadAssetAtPath<NNModel>("Assets/Models/crowd_policy.onnx");
+#else
+        return null;
+#endif
+    }
+
+    private void EnsureLearnedPolicyBuffers(int agentCount)
+    {
+        if (learnedPolicyDesiredVelocities == null || learnedPolicyDesiredVelocities.Length < agentCount)
+        {
+            learnedPolicyDesiredVelocities = new Vector3[agentCount];
+        }
+
+        int inputCount = Mathf.Max(1, learnedPolicyBatchSize) * LearnedPolicyFeatureCount;
+
+        if (learnedPolicyInputBuffer == null || learnedPolicyInputBuffer.Length < inputCount)
+        {
+            learnedPolicyInputBuffer = new float[inputCount];
+        }
+    }
+
+    private void WriteLearnedPolicyFeatures(int batchIndex, SimAgent agent, NeighborObservation neighborObservation)
+    {
+        Vector3 targetOffset = (agent.target - agent.position).WithY(0f);
+        Vector2 boundaryDistance = GetBoundaryDistance(agent.position);
+        WriteLearnedPolicyFeatures(batchIndex, targetOffset, agent.velocity, boundaryDistance, neighborObservation);
+    }
+
+    private void WriteLearnedPolicyFeatures(int batchIndex, CrowdEcsAgent agent, Vector3 position, NeighborObservation neighborObservation)
+    {
+        Vector3 targetOffset = (ToVector3(agent.Target) - position).WithY(0f);
+        Vector3 velocity = ToVector3(agent.Velocity);
+        Vector2 boundaryDistance = GetBoundaryDistance(position);
+        WriteLearnedPolicyFeatures(batchIndex, targetOffset, velocity, boundaryDistance, neighborObservation);
+    }
+
+    private void WriteLearnedPolicyFeatures(
+        int batchIndex,
+        Vector3 targetOffset,
+        Vector3 velocity,
+        Vector2 boundaryDistance,
+        NeighborObservation neighborObservation)
+    {
+        int featureOffset = batchIndex * LearnedPolicyFeatureCount;
+
+        learnedPolicyInputBuffer[featureOffset] = targetOffset.x;
+        learnedPolicyInputBuffer[featureOffset + 1] = targetOffset.z;
+        learnedPolicyInputBuffer[featureOffset + 2] = targetOffset.magnitude;
+        learnedPolicyInputBuffer[featureOffset + 3] = velocity.x;
+        learnedPolicyInputBuffer[featureOffset + 4] = velocity.z;
+        learnedPolicyInputBuffer[featureOffset + 5] = velocity.magnitude;
+        learnedPolicyInputBuffer[featureOffset + 6] = neighborObservation.nearestOffset.x;
+        learnedPolicyInputBuffer[featureOffset + 7] = neighborObservation.nearestOffset.z;
+        learnedPolicyInputBuffer[featureOffset + 8] = neighborObservation.nearestDistance;
+        learnedPolicyInputBuffer[featureOffset + 9] = neighborObservation.neighborCount;
+        learnedPolicyInputBuffer[featureOffset + 10] = boundaryDistance.x;
+        learnedPolicyInputBuffer[featureOffset + 11] = boundaryDistance.y;
+    }
+
+    private void ReleaseLearnedPolicyWorker()
+    {
+        if (learnedPolicyWorker == null)
+        {
+            return;
+        }
+
+        learnedPolicyWorker.Dispose();
+        learnedPolicyWorker = null;
+        learnedPolicyModel = null;
     }
 
     private void BuildSpatialGrid()
@@ -678,10 +1116,34 @@ public class CrowdExperimentManager : MonoBehaviour
         }
     }
 
-    private Vector3 CalculateSeparation(int agentIndex, Vector3 position, float neighborRadiusSqr, int cellSearchRadius)
+    private void BuildEcsSpatialGrid(NativeArray<Translation> translations)
+    {
+        foreach (List<int> cellAgents in spatialGrid.Values)
+        {
+            cellAgents.Clear();
+        }
+
+        for (int i = 0; i < translations.Length; i++)
+        {
+            Vector2Int cell = GetSpatialCell(ToVector3(translations[i].Value));
+
+            if (!spatialGrid.TryGetValue(cell, out List<int> cellAgents))
+            {
+                cellAgents = new List<int>();
+                spatialGrid.Add(cell, cellAgents);
+            }
+
+            cellAgents.Add(i);
+        }
+    }
+
+    private NeighborObservation CalculateNeighborObservation(int agentIndex, Vector3 position, float neighborRadiusSqr, int cellSearchRadius)
     {
         Vector2Int centerCell = GetSpatialCell(position);
-        Vector3 separation = Vector3.zero;
+        NeighborObservation observation = new NeighborObservation
+        {
+            nearestDistance = Mathf.Sqrt(neighborRadiusSqr)
+        };
 
         for (int xOffset = -cellSearchRadius; xOffset <= cellSearchRadius; xOffset++)
         {
@@ -712,12 +1174,76 @@ public class CrowdExperimentManager : MonoBehaviour
                     }
 
                     float distance = Mathf.Sqrt(distanceSqr);
-                    separation += offset / distance * (1f - distance / neighborRadius);
+                    observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    observation.neighborCount++;
+
+                    if (distance < observation.nearestDistance)
+                    {
+                        observation.nearestDistance = distance;
+                        observation.nearestOffset = offset;
+                    }
                 }
             }
         }
 
-        return separation;
+        return observation;
+    }
+
+    private NeighborObservation CalculateEcsNeighborObservation(
+        int agentIndex,
+        Vector3 position,
+        NativeArray<Translation> translations,
+        float neighborRadiusSqr,
+        int cellSearchRadius)
+    {
+        Vector2Int centerCell = GetSpatialCell(position);
+        NeighborObservation observation = new NeighborObservation
+        {
+            nearestDistance = Mathf.Sqrt(neighborRadiusSqr)
+        };
+
+        for (int xOffset = -cellSearchRadius; xOffset <= cellSearchRadius; xOffset++)
+        {
+            for (int yOffset = -cellSearchRadius; yOffset <= cellSearchRadius; yOffset++)
+            {
+                Vector2Int neighborCell = new Vector2Int(centerCell.x + xOffset, centerCell.y + yOffset);
+
+                if (!spatialGrid.TryGetValue(neighborCell, out List<int> cellAgents))
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < cellAgents.Count; i++)
+                {
+                    int otherIndex = cellAgents[i];
+
+                    if (otherIndex == agentIndex)
+                    {
+                        continue;
+                    }
+
+                    Vector3 offset = (position - ToVector3(translations[otherIndex].Value)).WithY(0f);
+                    float distanceSqr = offset.sqrMagnitude;
+
+                    if (distanceSqr <= 0.0001f || distanceSqr > neighborRadiusSqr)
+                    {
+                        continue;
+                    }
+
+                    float distance = Mathf.Sqrt(distanceSqr);
+                    observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    observation.neighborCount++;
+
+                    if (distance < observation.nearestDistance)
+                    {
+                        observation.nearestDistance = distance;
+                        observation.nearestOffset = offset;
+                    }
+                }
+            }
+        }
+
+        return observation;
     }
 
     private void RenderSpatialHashAgents()
@@ -996,6 +1522,17 @@ public class CrowdExperimentManager : MonoBehaviour
         return position;
     }
 
+    private Vector2 GetBoundaryDistance(Vector3 position)
+    {
+        Vector3 center = transform.position;
+        float halfWidth = spawnAreaSize.x * 0.5f;
+        float halfDepth = spawnAreaSize.y * 0.5f;
+        float distanceToXEdge = halfWidth - Mathf.Abs(position.x - center.x);
+        float distanceToZEdge = halfDepth - Mathf.Abs(position.z - center.z);
+
+        return new Vector2(distanceToXEdge, distanceToZEdge);
+    }
+
     private bool TryGetRandomNavMeshPoint(out Vector3 point)
     {
         Vector3 areaCenter = transform.position;
@@ -1043,7 +1580,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private int GetStuckAgentCount()
     {
-        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        if (IsSpatialAlgorithm(simulationAlgorithm))
         {
             int instancedStuckCount = 0;
 
@@ -1083,7 +1620,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
     private int GetTotalCompletedTasks()
     {
-        if (simulationAlgorithm == SimulationAlgorithm.SpatialHashGpuInstanced)
+        if (IsSpatialAlgorithm(simulationAlgorithm))
         {
             int instancedCompletedTasks = 0;
 

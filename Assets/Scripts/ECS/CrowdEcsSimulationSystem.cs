@@ -163,6 +163,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
             float steeringBlend = 1f - math.exp(-Settings.TurnResponsiveness * DeltaTime);
             int cellSearchRadius = math.max(1, (int)math.ceil(Settings.NeighborRadius / Settings.SpatialCellSize));
             bool behaviorLodEnabled = Settings.EnableBehaviorLod != 0;
+            bool learnedPolicyEnabled = Settings.EnableLearnedPolicy != 0;
 
             for (int i = 0; i < chunk.Count; i++)
             {
@@ -188,7 +189,8 @@ public partial class CrowdEcsSimulationSystem : SystemBase
                     ? GetThinkInterval(lodLevel, Settings)
                     : 1;
 
-                bool shouldThink = !behaviorLodEnabled || reachedTarget || SimulationTick >= agent.NextThinkTick;
+                bool shouldThink = !learnedPolicyEnabled
+                    && (!behaviorLodEnabled || reachedTarget || SimulationTick >= agent.NextThinkTick);
 
                 if (shouldThink)
                 {
