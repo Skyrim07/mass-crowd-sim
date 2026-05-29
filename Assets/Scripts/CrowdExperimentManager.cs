@@ -174,6 +174,7 @@ public class CrowdExperimentManager : MonoBehaviour
     {
         if (spawnOnStart)
         {
+            ScaleSpawnArea(.05f);
             ResetExperiment();
             BeginMetricsRun();
         }
@@ -185,6 +186,15 @@ public class CrowdExperimentManager : MonoBehaviour
         ReleaseRuntimeInstancedMaterials();
         ReleaseLearnedPolicyWorker();
         ClearEcsAgents();
+    }
+
+    public void ScaleSpawnArea(float ratio)
+    {
+        float agentRadius = agentPrefab.GetComponent<NavMeshAgent>().radius * instancedAgentScale;
+        float totalAgentArea = agentCount * Mathf.PI * agentRadius * agentRadius;
+        float newArea = totalAgentArea / ratio;
+        float newLength = Mathf.Sqrt(newArea);
+        spawnAreaSize = new Vector2(newLength, newLength);
     }
 
     [ContextMenu("Run Scaling Experiment")]
