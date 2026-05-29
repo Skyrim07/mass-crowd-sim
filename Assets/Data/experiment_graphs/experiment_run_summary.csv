@@ -1,0 +1,9 @@
+source_file,run_id,variant,agent_count,sample_count,duration_seconds,average_fps,p05_fps,average_delta_time_ms,final_completed_tasks,completed_tasks_per_minute,average_stuck_agents,max_stuck_agents,stuck_percent
+Assets\Data\baseline\crowd_metrics_1k.csv,2,BaselineNavMesh,1000,3,15.024,77.07666666666667,75.38199999999999,12.979666666666667,432,1725.2396166134188,0.0,0,0.0
+Assets\Data\baseline\crowd_metrics_2k.csv,3,BaselineNavMesh,2000,3,15.039,43.75666666666666,42.925999999999995,22.861666666666665,548,2186.3155794933173,0.0,0,0.0
+Assets\Data\baseline\crowd_metrics_5k.csv,4,BaselineNavMesh,5000,3,15.052,18.80333333333333,18.498,53.19733333333334,408,1626.3619452564444,0.0,0,0.0
+Assets\Data\baseline\crowd_metrics_10k.csv,1,BaselineNavMesh,10000,3,15.168,9.493333333333334,9.435,105.33433333333333,373,1475.4746835443038,0.0,0,0.0
+Assets\Data\gpu_instanced\crowd_metrics_1k.csv,6,SpatialHashGpuInstanced,1000,3,15.009,174.96666666666667,172.112,5.717,533,2130.7215670597643,0.0,0,0.0
+Assets\Data\gpu_instanced\crowd_metrics_2k.csv,7,SpatialHashGpuInstanced,2000,3,15.016,101.89333333333333,100.24699999999999,9.818666666666667,1027,4103.622802344166,0.0,0,0.0
+Assets\Data\gpu_instanced\crowd_metrics_5k.csv,8,SpatialHashGpuInstanced,5000,3,15.039,39.96333333333333,38.74,25.03933333333333,2235,8916.816277678037,0.0,0,0.0
+Assets\Data\gpu_instanced\crowd_metrics_10k.csv,5,SpatialHashGpuInstanced,10000,3,15.083,16.906666666666666,15.847000000000001,59.33733333333333,4036,16055.161440031825,0.0,0,0.0

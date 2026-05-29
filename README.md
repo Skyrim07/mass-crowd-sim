@@ -107,3 +107,26 @@ Lack of measurable evaluation
 git clone https://github.com/your-repo/crowd-simulation.git
 
 # Open the project in Unity Hub
+```
+
+## Running Experiment Batches
+
+`CrowdExperimentManager` has a **Full Experiment Batch** section in the inspector. By default it runs every simulation algorithm at 1k, 2k, 5k, and 10k agents, logs samples every 5 seconds, and writes:
+
+```text
+Assets/Data/experiment_batch/crowd_experiment_metrics.csv
+```
+
+In Play Mode, select the GameObject with `CrowdExperimentManager`, open the component context menu, and choose **Run Full Experiment Batch**. Adjust `batchAgentCountsToTest`, `batchTrialDurationSeconds`, or `batchAlgorithmsToTest` in the inspector before running if you want a different sweep.
+
+Generate graphs from the combined CSV with:
+
+```bash
+python PythonScripts/plot_experiment_metrics.py Assets/Data/experiment_batch/crowd_experiment_metrics.csv
+```
+
+You can also graph all existing metrics under `Assets/Data`:
+
+```bash
+python PythonScripts/plot_experiment_metrics.py Assets/Data --agent-counts 1000 2000 5000 10000
+```

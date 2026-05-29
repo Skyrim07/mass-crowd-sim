@@ -13,6 +13,7 @@ public class MetricsLogger : MonoBehaviour
     [SerializeField, Min(0.01f)] private float sampleIntervalSeconds = 1f;
 
     private string csvPath;
+    private string explicitCsvPath;
     private string currentVariant;
     private int currentAgentCount;
     private float elapsedTime;
@@ -22,6 +23,7 @@ public class MetricsLogger : MonoBehaviour
     private bool isRunning;
     private bool csvInitialized;
     private Func<int> completedTasksProvider;
+    private Func<int> stuckAgentsProvider;
 
     public string CsvOutputPath => string.IsNullOrEmpty(csvPath)
         ? Path.Combine(Application.persistentDataPath, csvFileName)
@@ -29,7 +31,7 @@ public class MetricsLogger : MonoBehaviour
 
     private void Awake()
     {
-        csvPath = Path.Combine(Application.persistentDataPath, csvFileName);
+        csvPath = ResolveCsvPath();
 
         if (writeCsvFile)
         {
@@ -68,11 +70,41 @@ public class MetricsLogger : MonoBehaviour
         RecordFrame(Time.deltaTime);
     }
 
-    public void BeginRun(string variantName, int agentCount, Func<int> completedTasksProvider = null)
+    public void ConfigureCsvOutput(string outputPath, bool resetFile)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            explicitCsvPath = null;
+            csvPath = ResolveCsvPath();
+        }
+        else
+        {
+            explicitCsvPath = ResolveOutputPath(outputPath);
+            csvPath = explicitCsvPath;
+            csvFileName = Path.GetFileName(csvPath);
+        }
+
+        writeCsvFile = true;
+        csvInitialized = false;
+        InitializeCsvFile(resetFile);
+    }
+
+    public void SetLogToConsole(bool enabled)
+    {
+        logToConsole = enabled;
+    }
+
+    public void SetSampleInterval(float seconds)
+    {
+        sampleIntervalSeconds = Mathf.Max(0.01f, seconds);
+    }
+
+    public void BeginRun(string variantName, int agentCount, Func<int> completedTasksProvider = null, Func<int> stuckAgentsProvider = null)
     {
         currentVariant = variantName;
         currentAgentCount = agentCount;
         this.completedTasksProvider = completedTasksProvider;
+        this.stuckAgentsProvider = stuckAgentsProvider;
         elapsedTime = 0f;
         sampleTimer = 0f;
         accumulatedFrameTime = 0f;
@@ -120,7 +152,8 @@ public class MetricsLogger : MonoBehaviour
         float averageDeltaTime = accumulatedFrameTime / Mathf.Max(1, accumulatedFrames);
         float averageFps = 1f / Mathf.Max(averageDeltaTime, 0.0001f);
         int completedTasks = completedTasksProvider?.Invoke() ?? 0;
-        string line = FormatCsvLine(elapsedTime, currentVariant, currentAgentCount, completedTasks, averageDeltaTime * 1000f, averageFps);
+        int stuckAgents = stuckAgentsProvider?.Invoke() ?? 0;
+        string line = FormatCsvLine(elapsedTime, currentVariant, currentAgentCount, completedTasks, stuckAgents, averageDeltaTime * 1000f, averageFps);
 
         if (logToConsole)
         {
@@ -137,9 +170,9 @@ public class MetricsLogger : MonoBehaviour
         accumulatedFrames = 0;
     }
 
-    private void InitializeCsvFile()
+    private void InitializeCsvFile(bool resetFile = false)
     {
-        csvPath = Path.Combine(Application.persistentDataPath, csvFileName);
+        csvPath = ResolveCsvPath();
         string outputDirectory = Path.GetDirectoryName(csvPath);
 
         if (!string.IsNullOrEmpty(outputDirectory))
@@ -147,16 +180,40 @@ public class MetricsLogger : MonoBehaviour
             Directory.CreateDirectory(outputDirectory);
         }
 
-        if (csvInitialized && File.Exists(csvPath))
+        if (!resetFile && csvInitialized && File.Exists(csvPath))
         {
             return;
         }
 
-        File.WriteAllText(csvPath, "time_seconds,variant,agent_count,completed_tasks,average_delta_time_ms,average_fps\n", Encoding.UTF8);
+        if (!resetFile && File.Exists(csvPath))
+        {
+            csvInitialized = true;
+            return;
+        }
+
+        File.WriteAllText(csvPath, "time_seconds,variant,agent_count,completed_tasks,stuck_agents,average_delta_time_ms,average_fps\n", Encoding.UTF8);
         csvInitialized = true;
     }
 
-    private static string FormatCsvLine(float timeSeconds, string variant, int agentCount, int completedTasks, float averageDeltaTimeMs, float averageFps)
+    private string ResolveCsvPath()
+    {
+        return string.IsNullOrEmpty(explicitCsvPath)
+            ? Path.Combine(Application.persistentDataPath, csvFileName)
+            : explicitCsvPath;
+    }
+
+    private static string ResolveOutputPath(string outputPath)
+    {
+        if (Path.IsPathRooted(outputPath))
+        {
+            return outputPath;
+        }
+
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        return Path.GetFullPath(Path.Combine(projectRoot, outputPath));
+    }
+
+    private static string FormatCsvLine(float timeSeconds, string variant, int agentCount, int completedTasks, int stuckAgents, float averageDeltaTimeMs, float averageFps)
     {
         CultureInfo culture = CultureInfo.InvariantCulture;
 
@@ -165,6 +222,7 @@ public class MetricsLogger : MonoBehaviour
             variant,
             agentCount.ToString(culture),
             completedTasks.ToString(culture),
+            stuckAgents.ToString(culture),
             averageDeltaTimeMs.ToString("F3", culture),
             averageFps.ToString("F2", culture));
     }

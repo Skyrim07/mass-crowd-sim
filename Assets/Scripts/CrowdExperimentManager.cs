@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using Unity.Barracuda;
 using Unity.Collections;
 using Unity.Entities;
@@ -70,6 +71,28 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField] private MetricsLogger metricsLogger;
     [SerializeField] private int[] agentCountsToTest = { 50, 100, 200, 400, 800 };
     [SerializeField, Min(0f)] private float trialDurationSeconds = 30f;
+
+    [Header("Full Experiment Batch")]
+    [SerializeField] private SimulationAlgorithm[] batchAlgorithmsToTest =
+    {
+        SimulationAlgorithm.BaselineNavMesh,
+        SimulationAlgorithm.SpatialHashGpuInstanced,
+        SimulationAlgorithm.SpatialHashTeacherTrainingData,
+        SimulationAlgorithm.LearnedPolicyGpuInstanced,
+        SimulationAlgorithm.DotsEcsGpuInstanced,
+        SimulationAlgorithm.DotsEcsBehaviorLodGpuInstanced,
+        SimulationAlgorithm.EcsLearnedPolicyGpuInstanced
+    };
+    [SerializeField] private int[] batchAgentCountsToTest = { 1000, 2000, 5000, 10000 };
+    [SerializeField, Min(0f)] private float batchWarmupSeconds = 2f;
+    [SerializeField, Min(0f)] private float batchTrialDurationSeconds = 30f;
+    [SerializeField, Min(0.01f)] private float batchMetricsSampleInterval = 5f;
+    [SerializeField] private string batchCsvOutputPath = "Assets/Data/experiment_batch/crowd_experiment_metrics.csv";
+    [SerializeField] private bool resetBatchCsvOnStart = true;
+    [SerializeField] private bool batchLogSamplesToConsole = false;
+    [SerializeField] private bool scaleSpawnAreaForBatch = true;
+    [SerializeField, Min(0.001f)] private float batchSpawnAreaOccupancyRatio = 0.05f;
+    [SerializeField] private bool quitApplicationAfterBatch = false;
 
     [Header("AI Training Data")]
     [SerializeField] private CrowdTrainingDataLogger trainingDataLogger;
@@ -190,7 +213,13 @@ public class CrowdExperimentManager : MonoBehaviour
 
     public void ScaleSpawnArea(float ratio)
     {
-        float agentRadius = agentPrefab.GetComponent<NavMeshAgent>().radius * instancedAgentScale;
+        float agentRadius = instancedAgentScale;
+
+        if (agentPrefab != null && agentPrefab.TryGetComponent(out NavMeshAgent navMeshAgent))
+        {
+            agentRadius = navMeshAgent.radius * instancedAgentScale;
+        }
+
         float totalAgentArea = agentCount * Mathf.PI * agentRadius * agentRadius;
         float newArea = totalAgentArea / ratio;
         float newLength = Mathf.Sqrt(newArea);
@@ -209,6 +238,18 @@ public class CrowdExperimentManager : MonoBehaviour
         scalingExperimentCoroutine = StartCoroutine(RunScalingExperiment());
     }
 
+    [ContextMenu("Run Full Experiment Batch")]
+    public void StartFullExperimentBatch()
+    {
+        if (scalingExperimentCoroutine != null)
+        {
+            StopCoroutine(scalingExperimentCoroutine);
+        }
+
+        EndMetricsRun();
+        scalingExperimentCoroutine = StartCoroutine(RunFullExperimentBatch());
+    }
+
     public void ResetExperiment()
     {
         ResetExperiment(agentCount);
@@ -225,7 +266,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
             if (metricsLogger != null)
             {
-                metricsLogger.BeginRun(simulationAlgorithm.ToString(), testAgentCount, GetTotalCompletedTasks);
+                metricsLogger.BeginRun(simulationAlgorithm.ToString(), testAgentCount, GetTotalCompletedTasks, GetStuckAgentCount);
             }
 
             yield return new WaitForSeconds(trialDurationSeconds);
@@ -237,6 +278,80 @@ public class CrowdExperimentManager : MonoBehaviour
         }
 
         scalingExperimentCoroutine = null;
+    }
+
+    public IEnumerator RunFullExperimentBatch()
+    {
+        PrepareBatchMetricsLogger();
+
+        SimulationAlgorithm[] algorithms = batchAlgorithmsToTest;
+        if (algorithms == null || algorithms.Length == 0)
+        {
+            algorithms = (SimulationAlgorithm[])global::System.Enum.GetValues(typeof(SimulationAlgorithm));
+        }
+
+        int[] counts = batchAgentCountsToTest;
+        if (counts == null || counts.Length == 0)
+        {
+            counts = new[] { agentCount };
+        }
+
+        Debug.Log($"Starting full crowd experiment batch. CSV: {metricsLogger.CsvOutputPath}");
+
+        for (int algorithmIndex = 0; algorithmIndex < algorithms.Length; algorithmIndex++)
+        {
+            simulationAlgorithm = algorithms[algorithmIndex];
+
+            for (int countIndex = 0; countIndex < counts.Length; countIndex++)
+            {
+                int testAgentCount = Mathf.Max(0, counts[countIndex]);
+                agentCount = testAgentCount;
+
+                if (scaleSpawnAreaForBatch)
+                {
+                    ScaleSpawnArea(batchSpawnAreaOccupancyRatio);
+                }
+
+                Debug.Log($"Running {simulationAlgorithm} with {testAgentCount} agents.");
+                ResetExperiment(testAgentCount);
+
+                if (batchWarmupSeconds > 0f)
+                {
+                    yield return new WaitForSeconds(batchWarmupSeconds);
+                }
+                else
+                {
+                    yield return null;
+                }
+
+                metricsLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount, GetTotalCompletedTasks, GetStuckAgentCount);
+                metricsRunActive = true;
+                BeginTrainingDataRun();
+
+                if (batchTrialDurationSeconds > 0f)
+                {
+                    yield return new WaitForSeconds(batchTrialDurationSeconds);
+                }
+                else
+                {
+                    yield return null;
+                }
+
+                EndMetricsRun();
+            }
+        }
+
+        scalingExperimentCoroutine = null;
+        Debug.Log($"Finished full crowd experiment batch. CSV: {metricsLogger.CsvOutputPath}");
+
+        if (quitApplicationAfterBatch)
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
     }
 
     public bool TryGetRandomDestination(out Vector3 destination)
@@ -439,9 +554,36 @@ public class CrowdExperimentManager : MonoBehaviour
             return;
         }
 
-        metricsLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount, GetTotalCompletedTasks);
+        metricsLogger.BeginRun(simulationAlgorithm.ToString(), ActiveAgentCount, GetTotalCompletedTasks, GetStuckAgentCount);
         metricsRunActive = true;
         BeginTrainingDataRun();
+    }
+
+    private void PrepareBatchMetricsLogger()
+    {
+        if (metricsLogger == null)
+        {
+            metricsLogger = GetComponent<MetricsLogger>();
+
+            if (metricsLogger == null)
+            {
+                metricsLogger = gameObject.AddComponent<MetricsLogger>();
+            }
+        }
+
+        metricsLogger.ConfigureCsvOutput(batchCsvOutputPath, resetBatchCsvOnStart);
+        metricsLogger.SetSampleInterval(batchMetricsSampleInterval);
+        metricsLogger.SetLogToConsole(batchLogSamplesToConsole);
+
+        if (!string.IsNullOrWhiteSpace(batchCsvOutputPath))
+        {
+            string outputDirectory = Path.GetDirectoryName(metricsLogger.CsvOutputPath);
+
+            if (!string.IsNullOrEmpty(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+        }
     }
 
     private void EndMetricsRun()

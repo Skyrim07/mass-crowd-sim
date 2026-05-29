@@ -246,6 +246,17 @@ MonoBehaviour:
   metricsLogger: {fileID: 1755908057}
   agentCountsToTest: 3200000064000000c80000009001000020030000
   trialDurationSeconds: 30
+  batchAlgorithmsToTest: 000000000100000004000000050000000300000006000000
+  batchAgentCountsToTest: e8030000d00700008813000010270000
+  batchWarmupSeconds: 2
+  batchTrialDurationSeconds: 15
+  batchMetricsSampleInterval: 5
+  batchCsvOutputPath: Assets/Data/experiment_batch/crowd_experiment_metrics.csv
+  resetBatchCsvOnStart: 1
+  batchLogSamplesToConsole: 0
+  scaleSpawnAreaForBatch: 1
+  batchSpawnAreaOccupancyRatio: 0.05
+  quitApplicationAfterBatch: 0
   trainingDataLogger: {fileID: 0}
   collectSpatialTeacherTrainingData: 0
   maxTrainingSamplesPerFrame: 256
