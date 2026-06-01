@@ -235,7 +235,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulationAlgorithm: 6
+  simulationAlgorithm: 4
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
   agentCount: 10000
@@ -247,10 +247,10 @@ MonoBehaviour:
   agentCountsToTest: 3200000064000000c80000009001000020030000
   trialDurationSeconds: 30
   batchAlgorithmsToTest: 000000000100000004000000050000000300000006000000
-  batchAgentCountsToTest: e8030000d00700008813000010270000
+  batchAgentCountsToTest: e8030000d00700008813000010270000983a0000204e0000
   batchWarmupSeconds: 2
   batchTrialDurationSeconds: 15
-  batchMetricsSampleInterval: 5
+  batchMetricsSampleInterval: 1
   batchCsvOutputPath: Assets/Data/experiment_batch/crowd_experiment_metrics.csv
   resetBatchCsvOnStart: 1
   batchLogSamplesToConsole: 0
@@ -272,7 +272,7 @@ MonoBehaviour:
   instancedTurnResponsiveness: 8
   spatialCellSize: 2.5
   neighborRadius: 1.5
-  separationStrength: 2.5
+  separationStrength: 3
   instancedTargetReachedDistance: 1.25
   instancedStuckSpeedThreshold: 0.1
   instancedStuckTimeThreshold: 2
@@ -286,7 +286,7 @@ MonoBehaviour:
   ecsLodMidSeparationScale: 0.65
   ecsLodFarSeparationScale: 0.25
   ecsLodVeryFarSeparationScale: 0
-  showDebugUi: 1
+  showDebugUi: 0
 --- !u!4 &998699049
 Transform:
   m_ObjectHideFlags: 0

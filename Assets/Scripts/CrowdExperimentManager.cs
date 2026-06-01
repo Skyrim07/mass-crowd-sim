@@ -113,7 +113,7 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField, Min(0.01f)] private float instancedAgentSpeed = 3.5f;
     [SerializeField, Min(0.01f)] private float instancedTurnResponsiveness = 8f;
     [SerializeField, Min(0.1f)] private float spatialCellSize = 2.5f;
-    [SerializeField, Min(0.1f)] private float neighborRadius = 1.5f;
+    [SerializeField, Min(0.1f)] private float neighborRadius = 1.8f;
     [SerializeField, Min(0f)] private float separationStrength = 2.5f;
     [SerializeField, Min(0.01f)] private float instancedTargetReachedDistance = 1.25f;
     [SerializeField, Min(0f)] private float instancedStuckSpeedThreshold = 0.1f;
@@ -1319,6 +1319,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
                     Vector3 offset = (position - simAgents[otherIndex].position).WithY(0f);
                     float distanceSqr = offset.sqrMagnitude;
+                    float d4 = distanceSqr * distanceSqr;
 
                     if (distanceSqr <= 0.0001f || distanceSqr > neighborRadiusSqr)
                     {
@@ -1326,7 +1327,8 @@ public class CrowdExperimentManager : MonoBehaviour
                     }
 
                     float distance = Mathf.Sqrt(distanceSqr);
-                    observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    // observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    observation.separation += offset * (1.0f / (d4 + 0.01f));
                     observation.neighborCount++;
 
                     if (distance < observation.nearestDistance)
@@ -1376,6 +1378,7 @@ public class CrowdExperimentManager : MonoBehaviour
 
                     Vector3 offset = (position - ToVector3(translations[otherIndex].Value)).WithY(0f);
                     float distanceSqr = offset.sqrMagnitude;
+                    float d4 = distanceSqr * distanceSqr;
 
                     if (distanceSqr <= 0.0001f || distanceSqr > neighborRadiusSqr)
                     {
@@ -1383,7 +1386,8 @@ public class CrowdExperimentManager : MonoBehaviour
                     }
 
                     float distance = Mathf.Sqrt(distanceSqr);
-                    observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    // observation.separation += offset / distance * (1f - distance / neighborRadius);
+                    observation.separation += offset * (1.0f / (d4 + 0.01f));
                     observation.neighborCount++;
 
                     if (distance < observation.nearestDistance)

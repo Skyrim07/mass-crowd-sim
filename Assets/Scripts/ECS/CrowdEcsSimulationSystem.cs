@@ -344,6 +344,7 @@ public partial class CrowdEcsSimulationSystem : SystemBase
 
                     float3 offset = Flatten(position - positions[otherIndex]);
                     float distanceSqr = math.lengthsq(offset);
+                    float d4 = distanceSqr * distanceSqr;
 
                     if (distanceSqr <= 0.0001f || distanceSqr > neighborRadiusSqr)
                     {
@@ -351,7 +352,8 @@ public partial class CrowdEcsSimulationSystem : SystemBase
                     }
 
                     float distance = math.sqrt(distanceSqr);
-                    separation += offset / distance * (1f - distance / settings.NeighborRadius);
+                    // separation += offset / distance * (1f - distance / settings.NeighborRadius);
+                    separation += offset * (1.0f / (d4 + 0.01f));
                 }
                 while (spatialGrid.TryGetNextValue(out otherIndex, ref iterator));
             }
