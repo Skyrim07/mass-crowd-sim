@@ -113,7 +113,7 @@ public class CrowdExperimentManager : MonoBehaviour
     [SerializeField, Min(0.01f)] private float instancedAgentSpeed = 3.5f;
     [SerializeField, Min(0.01f)] private float instancedTurnResponsiveness = 8f;
     [SerializeField, Min(0.1f)] private float spatialCellSize = 2.5f;
-    [SerializeField, Min(0.1f)] private float neighborRadius = 1.8f;
+    [SerializeField, Min(0.1f)] private float neighborRadius = 2f;
     [SerializeField, Min(0f)] private float separationStrength = 2.5f;
     [SerializeField, Min(0.01f)] private float instancedTargetReachedDistance = 1.25f;
     [SerializeField, Min(0f)] private float instancedStuckSpeedThreshold = 0.1f;

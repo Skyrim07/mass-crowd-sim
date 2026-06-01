@@ -271,8 +271,8 @@ MonoBehaviour:
   instancedAgentSpeed: 3.5
   instancedTurnResponsiveness: 8
   spatialCellSize: 2.5
-  neighborRadius: 1.5
-  separationStrength: 3
+  neighborRadius: 1.8
+  separationStrength: 2.5
   instancedTargetReachedDistance: 1.25
   instancedStuckSpeedThreshold: 0.1
   instancedStuckTimeThreshold: 2
