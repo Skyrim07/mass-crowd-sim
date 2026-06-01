@@ -164,6 +164,7 @@ def train(args):
                 "desired_velocity": {0: "batch"},
             },
             opset_version=12,
+            dynamo=False,
         )
         print(f"saved {args.onnx_output}")
 

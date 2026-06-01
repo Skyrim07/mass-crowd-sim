@@ -32,6 +32,7 @@ def export(args):
             "desired_velocity": {0: "batch"},
         },
         opset_version=12,
+        dynamo=False,
     )
     print(f"saved {args.output}")
 

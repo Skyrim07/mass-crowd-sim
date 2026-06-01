@@ -235,10 +235,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulationAlgorithm: 4
+  simulationAlgorithm: 6
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
-  agentCount: 10000
+  agentCount: 40000
   randomSeed: 12345
   spawnOnStart: 1
   navMeshSampleMaxDistance: 4
@@ -246,8 +246,8 @@ MonoBehaviour:
   metricsLogger: {fileID: 1755908057}
   agentCountsToTest: 3200000064000000c80000009001000020030000
   trialDurationSeconds: 30
-  batchAlgorithmsToTest: 000000000100000004000000050000000300000006000000
-  batchAgentCountsToTest: e8030000d00700008813000010270000983a0000204e0000
+  batchAlgorithmsToTest: 0000000001000000040000000500000006000000
+  batchAgentCountsToTest: e8030000d00700008813000010270000983a0000204e0000409c0000
   batchWarmupSeconds: 2
   batchTrialDurationSeconds: 15
   batchMetricsSampleInterval: 1
@@ -263,7 +263,7 @@ MonoBehaviour:
   trainingSampleFrameInterval: 2
   learnedPolicyModelAsset: {fileID: 0}
   learnedPolicyWorkerType: 32768
-  learnedPolicyBatchSize: 512
+  learnedPolicyBatchSize: 1000
   learnedPolicyVelocityBlend: 1
   instancedAgentMesh: {fileID: 0}
   instancedAgentMaterial: {fileID: 0}
@@ -271,7 +271,7 @@ MonoBehaviour:
   instancedAgentSpeed: 3.5
   instancedTurnResponsiveness: 8
   spatialCellSize: 2.5
-  neighborRadius: 1.8
+  neighborRadius: 2
   separationStrength: 2.5
   instancedTargetReachedDistance: 1.25
   instancedStuckSpeedThreshold: 0.1
@@ -283,9 +283,9 @@ MonoBehaviour:
   ecsLodMidTickInterval: 2
   ecsLodFarTickInterval: 4
   ecsLodVeryFarTickInterval: 8
-  ecsLodMidSeparationScale: 0.65
-  ecsLodFarSeparationScale: 0.25
-  ecsLodVeryFarSeparationScale: 0
+  ecsLodMidSeparationScale: 1
+  ecsLodFarSeparationScale: 1
+  ecsLodVeryFarSeparationScale: 1
   showDebugUi: 0
 --- !u!4 &998699049
 Transform:
