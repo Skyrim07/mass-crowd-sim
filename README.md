@@ -10,6 +10,7 @@ The checkpoint writeups can be found [here](Checkpoints).
 
 - [Checkpoint 1](Checkpoints/checkpoint1.md)
 - [Checkpoint 2](Checkpoints/checkpoint2.md)
+- [Final Report](Checkpoints/final_report.pdf)
 
 ---
 

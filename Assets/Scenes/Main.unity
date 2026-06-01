@@ -235,7 +235,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f6a0d7e8f9a4ecb84a6f0a41f840e1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulationAlgorithm: 6
+  simulationAlgorithm: 5
   agentPrefab: {fileID: 6532351800006293603, guid: bfeb7330dce3ed54d94a2171ad60230b, type: 3}
   spawnAreaSize: {x: 100, y: 100}
   agentCount: 40000
