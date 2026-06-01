@@ -263,7 +263,7 @@ MonoBehaviour:
   trainingSampleFrameInterval: 2
   learnedPolicyModelAsset: {fileID: 0}
   learnedPolicyWorkerType: 32768
-  learnedPolicyBatchSize: 1000
+  learnedPolicyBatchSize: 4096
   learnedPolicyVelocityBlend: 1
   instancedAgentMesh: {fileID: 0}
   instancedAgentMaterial: {fileID: 0}
